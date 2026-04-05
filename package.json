@@ -1,0 +1,40 @@
+{
+  "name": "epub-to-voice",
+  "version": "1.0.0",
+  "description": "EPUB to MP3 converter GUI powered by Edge TTS",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux"
+  },
+  "dependencies": {
+    "archiver": "^6.0.0"
+  },
+  "devDependencies": {
+    "electron": "^29.0.0",
+    "electron-builder": "^24.0.0"
+  },
+  "build": {
+    "appId": "com.epubtovoice.app",
+    "productName": "EPUB to Voice",
+    "copyright": "Copyright © 2025",
+    "extraResources": [
+      { "from": "epub_to_voice.py", "to": "epub_to_voice.py" },
+      { "from": "requirements.txt", "to": "requirements.txt" }
+    ],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "renderer/assets/icon.ico"
+    },
+    "mac": {
+      "target": [{ "target": "dmg", "arch": ["x64", "arm64"] }],
+      "icon": "renderer/assets/icon.icns"
+    },
+    "linux": {
+      "target": [{ "target": "AppImage", "arch": ["x64"] }],
+      "icon": "renderer/assets/icon.png"
+    }
+  }
+}

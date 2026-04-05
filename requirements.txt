@@ -1,0 +1,8 @@
+# epub_to_voice – dependencies
+# Install with:  pip install -r requirements.txt
+
+ebooklib>=0.18          # EPUB parsing
+beautifulsoup4>=4.12    # HTML → plain text
+edge-tts>=6.1.9         # Free Microsoft Edge TTS (no API key required)
+lxml>=5.0               # Faster HTML parser for BeautifulSoup (optional but recommended)
+pymupdf>=1.23           # PDF text extraction

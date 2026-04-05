@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm --version)",
+      "Bash(npm install:*)",
+      "Bash(npx electron:*)",
+      "Bash(node -e \"require\\('./main.js'\\)\")",
+      "Bash(node --check main.js)",
+      "Bash(node --check preload.js)",
+      "Bash(node --check renderer/renderer.js)",
+      "Bash(npm start:*)",
+      "Bash(echo \"PID: $!\")",
+      "Bash(pip install:*)",
+      "Bash(python:*)"
+    ]
+  }
+}

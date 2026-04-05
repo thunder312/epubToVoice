@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; media-src data: blob:">
+  <title>EPUB to Voice</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ── Header ─────────────────────────────────────────── -->
+  <header class="app-header">
+    <div class="header-left">
+      <span class="app-icon">📚</span>
+      <h1>EPUB to Voice</h1>
+    </div>
+    <div id="pythonBadge" class="badge badge--loading">Python wird geprüft…</div>
+  </header>
+
+  <!-- ── Main layout ────────────────────────────────────── -->
+  <div class="app-body">
+
+    <!-- Left: settings ─────────────────────────────────── -->
+    <aside class="panel panel--settings">
+
+      <!-- Drop zone -->
+      <div class="drop-zone" id="dropZone">
+        <div class="drop-zone-icon">📖</div>
+        <p class="drop-zone-label">EPUB · PDF · TXT hier ablegen</p>
+        <p class="drop-zone-hint">oder</p>
+        <div class="btn-row">
+          <button class="btn btn--secondary" id="btnAddFiles">Dateien wählen</button>
+          <button class="btn btn--secondary" id="btnAddFolder">Ordner wählen</button>
+        </div>
+      </div>
+
+      <!-- Output section -->
+      <section class="settings-section">
+        <h2 class="section-title">Ausgabe</h2>
+
+        <label class="field-label">Ausgabeverzeichnis</label>
+        <div class="input-row">
+          <input type="text" id="outputDir" class="input" placeholder="Gleich wie Eingabedatei">
+          <button class="btn btn--icon" id="btnBrowseOutput" title="Durchsuchen">📁</button>
+        </div>
+
+        <label class="toggle-label">
+          <input type="checkbox" id="chkMerge">
+          <span class="toggle-text">Alles in eine MP3 zusammenführen</span>
+        </label>
+        <label class="toggle-label">
+          <input type="checkbox" id="chkZip">
+          <span class="toggle-text">Als ZIP-Archiv verpacken</span>
+        </label>
+      </section>
+
+      <!-- Voice settings -->
+      <section class="settings-section">
+        <button class="section-toggle" id="toggleVoice" aria-expanded="false">
+          <h2 class="section-title">Stimme &amp; Geschwindigkeit</h2>
+          <span class="toggle-arrow">▸</span>
+        </button>
+
+        <div class="collapsible" id="voiceSettings">
+          <label class="field-label">Stimme</label>
+          <div id="voiceStatus" class="voice-loading">Stimmen werden geladen…</div>
+          <div class="voice-row" style="display:none" id="voiceRow">
+            <input list="voiceDatalist" id="voiceInput" class="input" placeholder="Stimme suchen…">
+            <button class="btn btn--icon" id="btnDemoVoice" title="Stimme anhören">▶</button>
+          </div>
+          <datalist id="voiceDatalist"></datalist>
+          <div id="demoStatus" class="demo-status"></div>
+
+          <label class="field-label">
+            Geschwindigkeit&ensp;<span id="rateDisplay" class="value-display">-10%</span>
+          </label>
+          <input type="range" id="rateSlider" class="slider" min="-50" max="100" step="5" value="-10">
+          <div class="slider-labels"><span>Langsam</span><span>Schnell</span></div>
+
+          <label class="field-label">
+            Lautstärke&ensp;<span id="volumeDisplay" class="value-display">+0%</span>
+          </label>
+          <input type="range" id="volumeSlider" class="slider" min="-50" max="50" step="5" value="0">
+          <div class="slider-labels"><span>Leise</span><span>Laut</span></div>
+
+          <label class="field-label">
+            Kurze Kapitel überspringen
+            <span class="field-hint">(min. Zeichen)</span>
+          </label>
+          <input type="number" id="skipShort" class="input input--narrow" value="60" min="0" max="9999">
+        </div>
+      </section>
+
+    </aside>
+
+    <!-- Right: queue ───────────────────────────────────── -->
+    <section class="panel panel--queue">
+
+      <div class="queue-header">
+        <h2 class="section-title">
+          Warteschlange&ensp;<span id="queueCount" class="count-badge">0</span>
+        </h2>
+        <div class="queue-actions">
+          <button class="btn btn--ghost btn--sm" id="btnClearQueue">Leeren</button>
+          <button class="btn btn--secondary" id="btnPreview" disabled>🎧 Hörprobe</button>
+          <button class="btn btn--primary" id="btnStart" disabled>▶ Konvertieren</button>
+          <button class="btn btn--danger" id="btnCancel" style="display:none">⏹ Abbrechen</button>
+        </div>
+      </div>
+
+      <div class="queue-list" id="queueList">
+        <div class="queue-empty" id="queueEmpty">
+          <span>Noch keine Dateien hinzugefügt</span>
+        </div>
+      </div>
+
+      <!-- Log -->
+      <details class="log-details" id="logDetails">
+        <summary class="log-summary">Protokoll</summary>
+        <div class="log-output" id="logOutput"></div>
+      </details>
+
+    </section>
+
+  </div><!-- /app-body -->
+
+</div><!-- /app -->
+
+<script src="renderer.js"></script>
+</body>
+</html>
