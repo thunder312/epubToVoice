@@ -143,6 +143,47 @@ ipcMain.handle('resolve-paths', async (event, paths) => {
 });
 
 // ---------------------------------------------------------------------------
+// Language → locale prefix mapping
+// (langdetect returns ISO 639-1 codes; edge-tts uses BCP-47 locale prefixes)
+// ---------------------------------------------------------------------------
+
+const LANG_LOCALE_PREFIX = {
+  af: 'af-ZA', ar: 'ar-',  bg: 'bg-BG', bn: 'bn-',  ca: 'ca-ES',
+  cs: 'cs-CZ', cy: 'cy-GB', da: 'da-DK', de: 'de-',  el: 'el-GR',
+  en: 'en-',   es: 'es-',  et: 'et-EE', fa: 'fa-IR', fi: 'fi-FI',
+  fr: 'fr-',   ga: 'ga-IE', gl: 'gl-ES', gu: 'gu-IN', hi: 'hi-IN',
+  hr: 'hr-HR', hu: 'hu-HU', hy: 'hy-AM', id: 'id-ID', is: 'is-IS',
+  it: 'it-IT', ja: 'ja-JP', ka: 'ka-GE', kk: 'kk-KZ', km: 'km-KH',
+  ko: 'ko-KR', lt: 'lt-LT', lv: 'lv-LV', mk: 'mk-MK', ml: 'ml-IN',
+  mn: 'mn-MN', mr: 'mr-IN', ms: 'ms-MY', mt: 'mt-MT', my: 'my-MM',
+  nb: 'nb-NO', nl: 'nl-',  pl: 'pl-PL', ps: 'ps-AF', pt: 'pt-',
+  ro: 'ro-RO', ru: 'ru-RU', si: 'si-LK', sk: 'sk-SK', sl: 'sl-SI',
+  so: 'so-SO', sq: 'sq-AL', sr: 'sr-RS', sv: 'sv-SE', sw: 'sw-',
+  ta: 'ta-IN', te: 'te-IN', th: 'th-TH', tr: 'tr-TR', uk: 'uk-UA',
+  ur: 'ur-PK', uz: 'uz-UZ', vi: 'vi-VN', zh: 'zh-',  zu: 'zu-ZA',
+};
+
+// Human-readable language names for the UI
+const LANG_NAMES = {
+  af: 'Afrikaans', ar: 'Arabisch',  bg: 'Bulgarisch', bn: 'Bengalisch',
+  ca: 'Katalanisch', cs: 'Tschechisch', cy: 'Walisisch', da: 'Dänisch',
+  de: 'Deutsch',  el: 'Griechisch', en: 'Englisch',  es: 'Spanisch',
+  et: 'Estnisch', fa: 'Persisch',   fi: 'Finnisch',  fr: 'Französisch',
+  ga: 'Irisch',   gl: 'Galizisch',  gu: 'Gujarati',  hi: 'Hindi',
+  hr: 'Kroatisch', hu: 'Ungarisch', hy: 'Armenisch', id: 'Indonesisch',
+  is: 'Isländisch', it: 'Italienisch', ja: 'Japanisch', ka: 'Georgisch',
+  kk: 'Kasachisch', km: 'Khmer',   ko: 'Koreanisch', lt: 'Litauisch',
+  lv: 'Lettisch', mk: 'Mazedonisch', ml: 'Malayalam', mn: 'Mongolisch',
+  mr: 'Marathi',  ms: 'Malaiisch', mt: 'Maltesisch', my: 'Birmanisch',
+  nb: 'Norwegisch', nl: 'Niederländisch', pl: 'Polnisch', pt: 'Portugiesisch',
+  ro: 'Rumänisch', ru: 'Russisch', sk: 'Slowakisch', sl: 'Slowenisch',
+  sq: 'Albanisch', sr: 'Serbisch', sv: 'Schwedisch', sw: 'Suaheli',
+  ta: 'Tamilisch', te: 'Telugu',   th: 'Thailändisch', tr: 'Türkisch',
+  uk: 'Ukrainisch', ur: 'Urdu',    uz: 'Usbekisch',  vi: 'Vietnamesisch',
+  zh: 'Chinesisch', zu: 'Zulu',
+};
+
+// ---------------------------------------------------------------------------
 // IPC – python / voices
 // ---------------------------------------------------------------------------
 
@@ -187,6 +228,40 @@ ipcMain.handle('load-voices', async () => {
         })
         .filter(Boolean);
       resolve({ voices });
+    });
+    proc.on('error', e => resolve({ error: e.message }));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// IPC – language detection
+// ---------------------------------------------------------------------------
+
+ipcMain.handle('detect-language', async (event, filePath) => {
+  const cmd = await getPython();
+  if (!cmd) return { error: 'Python nicht gefunden' };
+
+  return new Promise(resolve => {
+    const proc = spawn(
+      cmd,
+      [getScriptPath(), filePath, '--detect-language'],
+      { shell: false, env: { ...process.env, PYTHONIOENCODING: 'utf-8' } }
+    );
+    let out = '', err = '';
+    proc.stdout.on('data', d => (out += d));
+    proc.stderr.on('data', d => (err += d));
+    proc.on('close', () => {
+      try {
+        const data  = JSON.parse(out.trim());
+        const lang  = data.language;
+        if (!lang) { resolve({ error: data.error || 'Sprache nicht erkannt' }); return; }
+
+        const prefix    = LANG_LOCALE_PREFIX[lang] || '';
+        const langName  = LANG_NAMES[lang] || lang.toUpperCase();
+        resolve({ language: lang, langName, localePrefix: prefix, confidence: data.confidence, method: data.method });
+      } catch {
+        resolve({ error: 'Ungültige Antwort: ' + out.slice(0, 100) });
+      }
     });
     proc.on('error', e => resolve({ error: e.message }));
   });

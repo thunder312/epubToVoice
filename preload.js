@@ -27,6 +27,9 @@ contextBridge.exposeInMainWorld('api', {
   getPythonStatus: () => ipcRenderer.invoke('get-python-status'),
   loadVoices:      () => ipcRenderer.invoke('load-voices'),
 
+  // Language detection
+  detectLanguage: filePath => ipcRenderer.invoke('detect-language', filePath),
+
   // Voice demo
   demoVoice: (voice, rate, volume) => ipcRenderer.invoke('demo-voice', { voice, rate, volume }),
 

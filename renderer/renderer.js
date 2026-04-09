@@ -8,6 +8,7 @@ let isConverting = false;
 let stopRequested = false;
 let currentJobId  = null;
 let unsubscribeProgress = null;
+let allVoices   = [];     // full list loaded at startup (for language-based filtering)
 
 const settings = {
   outputDir: '',
@@ -36,6 +37,7 @@ const voiceRow      = $('voiceRow');
 const voiceInput    = $('voiceInput');
 const voiceDatalist = $('voiceDatalist');
 const demoStatus    = $('demoStatus');
+const langSuggest   = $('langSuggest');
 
 const rateSlider   = $('rateSlider');
 const rateDisplay  = $('rateDisplay');
@@ -87,6 +89,7 @@ async function loadVoices() {
   voiceStatus.style.display = 'none';
   voiceRow.style.display    = '';
 
+  allVoices = result.voices;
   for (const v of result.voices) {
     const opt = document.createElement('option');
     opt.value = v.name;
@@ -203,14 +206,66 @@ function bindEvents() {
 function addToQueue(epubPaths) {
   if (!epubPaths || !epubPaths.length) return;
   const existing = new Set(queue.map(j => j.path));
-  let added = 0;
+  const newPaths = [];
   for (const p of epubPaths) {
     if (existing.has(p)) continue;
     queue.push({ id: crypto.randomUUID(), path: p, name: baseName(p), status: 'queued', current: 0, total: 0, outputPath: null, subText: '' });
-    added++;
+    newPaths.push(p);
   }
-  if (added) log(`${added} Datei(en) zur Warteschlange hinzugefügt.`);
+  if (newPaths.length) {
+    log(`${newPaths.length} Datei(en) zur Warteschlange hinzugefügt.`);
+    // Detect language from the first newly added file
+    detectAndSuggestVoice(newPaths[0]);
+  }
   renderQueue();
+}
+
+// ---------------------------------------------------------------------------
+// Language detection & voice suggestion
+// ---------------------------------------------------------------------------
+async function detectAndSuggestVoice(filePath) {
+  langSuggest.style.display = 'none';
+  langSuggest.innerHTML     = '';
+
+  const result = await window.api.detectLanguage(filePath);
+  if (result.error || !result.language) return;
+
+  // Filter loaded voices by locale prefix (up to 4)
+  const prefix    = result.localePrefix || '';
+  const matching  = allVoices.filter(v => v.locale.startsWith(prefix)).slice(0, 4);
+  if (!matching.length) return;
+
+  // Skip suggestion if current voice already matches the detected language
+  if (voiceInput.value && voiceInput.value.startsWith(prefix.replace(/-$/, ''))) return;
+
+  // Build suggestion banner
+  const conf     = result.confidence >= 0.7 ? '' : ' <span class="lang-conf">(unsicher)</span>';
+  const pills    = matching.map(v =>
+    `<button class="lang-pill" data-voice="${escHtml(v.name)}" title="${escHtml(v.locale)} · ${escHtml(v.gender)}">${escHtml(v.name)}</button>`
+  ).join('');
+
+  langSuggest.innerHTML =
+    `<span class="lang-flag">🌍</span>` +
+    `<span class="lang-label">Erkannte Sprache: <strong>${escHtml(result.langName)}</strong>${conf}</span>` +
+    `<span class="lang-voices">${pills}</span>` +
+    `<button class="lang-dismiss" title="Schließen">✕</button>`;
+
+  langSuggest.style.display = 'flex';
+
+  // Wire up pill clicks → set voice
+  langSuggest.querySelectorAll('.lang-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const voice = btn.dataset.voice;
+      voiceInput.value = voice;
+      settings.voice   = voice;
+      langSuggest.style.display = 'none';
+      log(`🌍 Stimme gewechselt zu: ${voice}`);
+    });
+  });
+
+  langSuggest.querySelector('.lang-dismiss').addEventListener('click', () => {
+    langSuggest.style.display = 'none';
+  });
 }
 
 function renderQueue() {

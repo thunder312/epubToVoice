@@ -17,6 +17,7 @@ Usage:
 import asyncio
 import argparse
 import html as html_lib
+import json
 import re
 import sys
 from pathlib import Path
@@ -573,6 +574,131 @@ class EpubConverter:
 
 
 # ---------------------------------------------------------------------------
+# Language detection
+# ---------------------------------------------------------------------------
+
+def _extract_sample(path: Path, max_chars: int = 6000) -> str:
+    """Extract a plain-text sample from EPUB / PDF / TXT for language detection."""
+    ext = path.suffix.lower()
+    try:
+        if ext == ".txt":
+            return sanitize_text(
+                path.read_text(encoding="utf-8", errors="replace")
+            )[:max_chars]
+
+        if ext == ".epub":
+            from ebooklib import epub as _epub
+            book = _epub.read_epub(str(path), options={"ignore_ncx": True})
+            buf = ""
+            for item in book.get_items():
+                if item.get_type() != ebooklib.ITEM_DOCUMENT:
+                    continue
+                soup = BeautifulSoup(item.get_content(), "html.parser")
+                for tag in soup(["nav", "script", "style"]):
+                    tag.decompose()
+                buf += " " + soup.get_text(" ", strip=True)
+                if len(buf) >= max_chars:
+                    break
+            return sanitize_text(buf)[:max_chars]
+
+        if ext == ".pdf":
+            import fitz
+            doc = fitz.open(str(path))
+            buf = ""
+            for page in doc:
+                buf += page.get_text()
+                if len(buf) >= max_chars:
+                    break
+            doc.close()
+            return sanitize_text(buf)[:max_chars]
+
+    except Exception:
+        pass
+    return ""
+
+
+def _detect_language_heuristic(text: str) -> tuple[str, float]:
+    """
+    Lightweight heuristic language detection based on character sets and
+    common function words. Returns (language_code, confidence 0–1).
+    """
+    sample = text[:4000].lower()
+    words  = set(re.findall(r"\b[a-zäöüßàâçéèêëîïôùûüœæñ]{2,}\b", sample))
+
+    LANG_WORDS: dict[str, list[str]] = {
+        "de": ["und", "der", "die", "das", "ist", "nicht", "mit", "ich", "auf", "auch", "ein", "eine", "des", "dem", "den"],
+        "en": ["the", "and", "is", "are", "was", "for", "this", "that", "with", "have", "not", "from", "they", "which"],
+        "fr": ["les", "des", "une", "est", "que", "qui", "dans", "pour", "pas", "par", "sur", "avec", "mais", "ont"],
+        "es": ["los", "las", "una", "que", "con", "por", "para", "como", "más", "pero", "del", "son", "sus", "este"],
+        "it": ["che", "non", "una", "della", "sono", "come", "per", "con", "del", "alla", "nel", "questo", "più"],
+        "nl": ["van", "het", "een", "dat", "zijn", "ook", "niet", "voor", "met", "door", "maar", "bij", "wordt"],
+        "pt": ["que", "não", "uma", "com", "por", "para", "mais", "dos", "nas", "seu", "sua", "mas", "pelo"],
+        "ru": [],  # Cyrillic → detected separately
+        "zh": [],  # CJK → detected separately
+        "ja": [],  # CJK / Kana → detected separately
+    }
+
+    # CJK / Cyrillic shortcuts
+    if re.search(r"[\u4e00-\u9fff]", text[:2000]):
+        # Distinguish Japanese (Hiragana/Katakana) from Chinese
+        if re.search(r"[\u3040-\u30ff]", text[:2000]):
+            return "ja", 0.85
+        return "zh", 0.85
+    if re.search(r"[\u0400-\u04ff]", text[:2000]):
+        return "ru", 0.85
+
+    scores: dict[str, int] = {}
+    for lang, kw in LANG_WORDS.items():
+        if not kw:
+            continue
+        scores[lang] = sum(1 for w in kw if w in words)
+
+    if not scores or max(scores.values()) == 0:
+        return "en", 0.3   # safe default
+
+    best    = max(scores, key=scores.get)
+    total   = sum(scores.values())
+    conf    = round(scores[best] / total, 2) if total else 0.3
+    return best, min(conf, 0.95)
+
+
+def detect_language_cmd(file_path: str) -> None:
+    """
+    Detect the language of a file and print JSON to stdout.
+    Used by the Electron front-end via --detect-language.
+    Output: {"language": "de", "confidence": 0.9, "method": "langdetect"|"heuristic"|"error"}
+    """
+    path = Path(file_path)
+    if not path.exists():
+        print(json.dumps({"language": None, "error": f"File not found: {file_path}"}))
+        return
+
+    sample = _extract_sample(path)
+    if not sample or len(sample) < 30:
+        print(json.dumps({"language": None, "error": "Not enough text to detect language"}))
+        return
+
+    # Try langdetect first (more accurate)
+    try:
+        from langdetect import detect_langs
+        results = detect_langs(sample)
+        if results:
+            best     = results[0]
+            lang     = best.lang.split("-")[0]   # "zh-cn" → "zh"
+            conf     = round(best.prob, 2)
+            print(json.dumps({"language": lang, "confidence": conf, "method": "langdetect"}))
+            return
+    except ImportError:
+        pass   # langdetect not installed → fall through to heuristic
+    except Exception:
+        pass
+
+    # Heuristic fallback
+    lang, conf = _detect_language_heuristic(sample)
+    print(json.dumps({"language": lang, "confidence": conf, "method": "heuristic"}))
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -608,8 +734,10 @@ Examples:
                         help="Convert only the first N chapters (e.g. 3 for a preview)")
     parser.add_argument("--merge",         action="store_true",
                         help="Concatenate all splits into a single MP3 file")
-    parser.add_argument("--list-voices",   nargs="?", const="", metavar="FILTER",
+    parser.add_argument("--list-voices",      nargs="?", const="", metavar="FILTER",
                         help='List available voices, optionally filtered (e.g. --list-voices de)')
+    parser.add_argument("--detect-language",  action="store_true",
+                        help='Detect the language of the input file and print JSON (used by GUI)')
     return parser
 
 
@@ -619,6 +747,13 @@ def main() -> None:
 
     if args.list_voices is not None:
         asyncio.run(list_voices_cmd(args.list_voices))
+        return
+
+    if args.detect_language:
+        if not args.epub:
+            print(json.dumps({"language": None, "error": "No file specified"}))
+            sys.exit(1)
+        detect_language_cmd(args.epub)
         return
 
     if not args.epub:
