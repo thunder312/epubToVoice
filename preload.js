@@ -27,6 +27,9 @@ contextBridge.exposeInMainWorld('api', {
   getPythonStatus: () => ipcRenderer.invoke('get-python-status'),
   loadVoices:      () => ipcRenderer.invoke('load-voices'),
 
+  // Document structure (for preview modal)
+  getStructure: filePath => ipcRenderer.invoke('get-structure', filePath),
+
   // Language detection
   detectLanguage: filePath => ipcRenderer.invoke('detect-language', filePath),
 

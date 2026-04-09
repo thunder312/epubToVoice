@@ -241,6 +241,34 @@ ipcMain.handle('load-voices', async () => {
 });
 
 // ---------------------------------------------------------------------------
+// IPC – document structure (for preview modal)
+// ---------------------------------------------------------------------------
+
+ipcMain.handle('get-structure', async (event, filePath) => {
+  const cmd = await getPython();
+  if (!cmd) return { error: 'Python nicht gefunden' };
+
+  return new Promise(resolve => {
+    const proc = spawn(
+      cmd,
+      [getScriptPath(), filePath, '--get-structure'],
+      { shell: false, env: { ...process.env, PYTHONIOENCODING: 'utf-8' } }
+    );
+    let out = '', err = '';
+    proc.stdout.on('data', d => (out += d));
+    proc.stderr.on('data', d => (err += d));
+    proc.on('close', () => {
+      try {
+        resolve(JSON.parse(out.trim()));
+      } catch {
+        resolve({ error: err || 'Ungültige Antwort' });
+      }
+    });
+    proc.on('error', e => resolve({ error: e.message }));
+  });
+});
+
+// ---------------------------------------------------------------------------
 // IPC – language detection
 // ---------------------------------------------------------------------------
 
@@ -320,19 +348,23 @@ ipcMain.handle('demo-voice', async (event, { voice, rate, volume }) => {
 });
 
 ipcMain.handle('start-conversion', async (event, opts) => {
-  const { jobId, epubPath, outputDir, voice, rate, volume, skipShort, maxChapters, merge, createZip } = opts;
+  const { jobId, epubPath, outputDir, voice, rate, volume, skipShort, maxChapters, merge, createZip,
+          startPage, endPage, skipChapters } = opts;
 
   const cmd = await getPython();
   if (!cmd) return { error: 'Python not found' };
 
   const args = [getScriptPath(), epubPath];
-  if (outputDir)           args.push('-o', outputDir);
-  if (voice)               args.push('-v', voice);
-  if (rate)                args.push(`--rate=${rate}`);
-  if (volume)              args.push(`--volume=${volume}`);
-  if (skipShort != null)   args.push(`--skip-short=${skipShort}`);
-  if (maxChapters != null) args.push(`--max-chapters=${maxChapters}`);
-  if (merge)               args.push('--merge');
+  if (outputDir)               args.push('-o', outputDir);
+  if (voice)                   args.push('-v', voice);
+  if (rate)                    args.push(`--rate=${rate}`);
+  if (volume)                  args.push(`--volume=${volume}`);
+  if (skipShort != null)       args.push(`--skip-short=${skipShort}`);
+  if (maxChapters != null)     args.push(`--max-chapters=${maxChapters}`);
+  if (merge)                   args.push('--merge');
+  if (startPage != null)       args.push(`--start-page=${startPage}`);
+  if (endPage   != null)       args.push(`--end-page=${endPage}`);
+  if (skipChapters && skipChapters.length) args.push(`--skip-chapters=${skipChapters.join(',')}`);
 
   return new Promise(resolve => {
     const proc = spawn(cmd, args, { shell: false, env: { ...process.env, PYTHONIOENCODING: 'utf-8' } });

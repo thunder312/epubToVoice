@@ -232,18 +232,24 @@ class EpubConverter:
         skip_short: int = 60,
         max_chapters: int | None = None,
         merge: bool = False,
+        start_page: int | None = None,      # PDF: first page to include (1-based)
+        end_page: int | None = None,        # PDF: last page to include (1-based, inclusive)
+        skip_chapters: set[int] | None = None,  # EPUB/TXT: doc-order indices to skip
     ):
         self.epub_path    = Path(epub_path)
         self.output_dir   = (
             Path(output_dir) if output_dir
             else self.epub_path.parent / self.epub_path.stem
         )
-        self.voice        = voice
-        self.rate         = rate
-        self.volume       = volume
-        self.skip_short   = skip_short
-        self.max_chapters = max_chapters
-        self.merge        = merge
+        self.voice         = voice
+        self.rate          = rate
+        self.volume        = volume
+        self.skip_short    = skip_short
+        self.max_chapters  = max_chapters
+        self.merge         = merge
+        self.start_page    = start_page
+        self.end_page      = end_page
+        self.skip_chapters = skip_chapters or set()
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -292,10 +298,14 @@ class EpubConverter:
         items       = {item.get_id(): item for item in book.get_items()}
         chapters:   list[dict] = []
         skipped_toc = 0
+        doc_idx     = -1   # sequential index among ITEM_DOCUMENT spine items
 
         for spine_id, _ in book.spine:
             item = items.get(spine_id)
             if item is None or item.get_type() != ebooklib.ITEM_DOCUMENT:
+                continue
+            doc_idx += 1
+            if doc_idx in self.skip_chapters:
                 continue
 
             segments = html_to_segments(item.get_content())
@@ -369,15 +379,21 @@ class EpubConverter:
                 file=sys.stderr,
             )
 
+        # --- Apply user-selected page range (1-based, inclusive) ---
+        first_page = max(1, self.start_page or 1)
+        last_page  = min(len(doc), self.end_page or len(doc))
+
         # --- Extract segments page by page, group into chapters ---
         TARGET    = 15_000
         chapters: list[dict] = []
         cur_segs: list[dict] = []
         cur_len   = 0
-        page_start = 1
+        page_start = first_page
         skipped_toc = 0
 
         for i, page in enumerate(doc, start=1):
+            if i < first_page or i > last_page:
+                continue
             if has_heading_detection:
                 for block in page.get_text("dict")["blocks"]:
                     if block.get("type") != 0:
@@ -477,11 +493,15 @@ class EpubConverter:
         # Group flat segments into logical chapters (split at heading boundaries)
         chapters:    list[dict] = []
         current:     list[dict] = []
-        skipped_toc = 0
+        skipped_toc  = 0
+        sec_idx      = -1   # sequential section index (for skip_chapters)
 
         def flush_chapter(segs: list[dict]) -> None:
-            nonlocal skipped_toc
+            nonlocal skipped_toc, sec_idx
             if not segs:
+                return
+            sec_idx += 1
+            if sec_idx in self.skip_chapters:
                 return
             plain            = segments_to_plain_text(segs)
             title_candidate  = (
@@ -588,6 +608,129 @@ class EpubConverter:
             print("✓")
 
         print(f"\n✅  Fertig! Dateien gespeichert in: {self.output_dir}")
+
+
+# ---------------------------------------------------------------------------
+# Document structure extraction (for GUI preview)
+# ---------------------------------------------------------------------------
+
+def get_structure_cmd(file_path: str) -> None:
+    """
+    Extract document structure (chapters / pages) and print JSON to stdout.
+    Used by the Electron front-end via --get-structure for the preview modal.
+    """
+    path = Path(file_path)
+    if not path.exists():
+        print(json.dumps({"error": f"File not found: {file_path}"}))
+        return
+    ext = path.suffix.lower()
+    try:
+        if ext == ".pdf":
+            _structure_pdf(path)
+        elif ext == ".epub":
+            _structure_epub(path)
+        elif ext == ".txt":
+            _structure_txt(path)
+        else:
+            print(json.dumps({"error": f"Unsupported: {ext}"}))
+    except Exception as exc:
+        print(json.dumps({"error": str(exc)}))
+
+
+def _structure_pdf(path: Path, max_thumbs: int = 40) -> None:
+    import fitz, base64 as _b64
+
+    doc   = fitz.open(str(path))
+    title = (doc.metadata.get("title") or "").strip() or path.stem
+    total = len(doc)
+
+    pages = []
+    for i in range(min(max_thumbs, total)):
+        page  = doc[i]
+        rect  = page.rect
+        scale = 120 / max(rect.width, 1)
+        pix   = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+        thumb = _b64.b64encode(pix.tobytes("png")).decode()
+        plain = sanitize_text(page.get_text())
+        pages.append({
+            "page":         i + 1,
+            "thumbnail":    thumb,
+            "textPreview":  plain[:200],
+            "looksLikeToc": is_toc_content(plain),
+            "looksLikeCover": i == 0 and len(plain) < 300,
+        })
+
+    doc.close()
+    print(json.dumps({
+        "type":       "pdf",
+        "title":      title,
+        "totalPages": total,
+        "thumbCount": len(pages),
+        "pages":      pages,
+    }), flush=True)
+
+
+def _structure_epub(path: Path) -> None:
+    EpubConverter._patch_ebooklib()
+    book  = epub.read_epub(str(path), options={"ignore_ncx": True})
+    meta  = book.get_metadata("DC", "title")
+    raw   = meta[0][0].strip() if meta else path.stem
+    title = EpubConverter._clean_title(raw) or path.stem
+
+    items    = {item.get_id(): item for item in book.get_items()}
+    chapters = []
+    doc_idx  = -1
+
+    for spine_id, _ in book.spine:
+        item = items.get(spine_id)
+        if item is None or item.get_type() != ebooklib.ITEM_DOCUMENT:
+            continue
+        doc_idx += 1
+        segments = html_to_segments(item.get_content())
+        plain    = segments_to_plain_text(segments)
+        soup     = BeautifulSoup(item.get_content(), "html.parser")
+        h_tag    = soup.find(["h1", "h2", "h3"])
+        ch_title = h_tag.get_text(strip=True) if h_tag else item.get_name()
+        chapters.append({
+            "index":    doc_idx,
+            "title":    ch_title,
+            "chars":    len(plain),
+            "isToc":    is_toc_title(ch_title) or is_toc_content(plain),
+        })
+
+    print(json.dumps({
+        "type":     "epub",
+        "title":    title,
+        "chapters": chapters,
+    }), flush=True)
+
+
+def _structure_txt(path: Path) -> None:
+    content = path.read_text(encoding="utf-8", errors="replace")
+    title   = EpubConverter._clean_title(path.stem) or path.stem
+
+    HEADING_RE = re.compile(
+        r"(?m)^(?:Kapitel|Chapter|Teil|Part|Abschnitt|Section|Epilog|Prolog|Vorwort|Nachwort)\s+\S.*$"
+    )
+    parts   = re.split(r"\x00|\n{3,}", HEADING_RE.sub("\x00\\g<0>", content))
+    sections = []
+    for i, part in enumerate(parts):
+        text = sanitize_text(part)
+        if len(text) < 30:
+            continue
+        first_line = part.strip().splitlines()[0][:80] if part.strip() else f"Abschnitt {i+1}"
+        sections.append({
+            "index": i,
+            "title": sanitize_text(first_line),
+            "chars": len(text),
+            "isToc": is_toc_title(first_line) or is_toc_content(text),
+        })
+
+    print(json.dumps({
+        "type":     "txt",
+        "title":    title,
+        "sections": sections,
+    }), flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -755,6 +898,14 @@ Examples:
                         help='List available voices, optionally filtered (e.g. --list-voices de)')
     parser.add_argument("--detect-language",  action="store_true",
                         help='Detect the language of the input file and print JSON (used by GUI)')
+    parser.add_argument("--get-structure",    action="store_true",
+                        help='Extract document structure (chapters/pages) and print JSON (used by GUI)')
+    parser.add_argument("--start-page",  type=int, default=None,
+                        help='PDF: first page to convert (1-based, default: 1)')
+    parser.add_argument("--end-page",    type=int, default=None,
+                        help='PDF: last page to convert (1-based, inclusive, default: last)')
+    parser.add_argument("--skip-chapters", default="",
+                        help='Comma-separated doc-order indices of chapters/sections to skip')
     return parser
 
 
@@ -778,6 +929,13 @@ def main() -> None:
         detect_language_cmd(args.epub)
         return
 
+    if args.get_structure:
+        if not args.epub:
+            print(json.dumps({"error": "No file specified"}))
+            sys.exit(1)
+        get_structure_cmd(args.epub)
+        return
+
     if not args.epub:
         parser.print_help()
         sys.exit(1)
@@ -791,15 +949,20 @@ def main() -> None:
         print(f"Fehler: Nicht unterstütztes Format '{epub_path.suffix}'. Unterstützt: {', '.join(SUPPORTED)}", file=sys.stderr)
         sys.exit(1)
 
+    skip_set = {int(x) for x in args.skip_chapters.split(",") if x.strip().isdigit()}
+
     converter = EpubConverter(
-        epub_path    = epub_path,
-        output_dir   = args.output,
-        voice        = args.voice,
-        rate         = args.rate,
-        volume       = args.volume,
-        skip_short   = args.skip_short,
-        max_chapters = args.max_chapters,
-        merge        = args.merge,
+        epub_path     = epub_path,
+        output_dir    = args.output,
+        voice         = args.voice,
+        rate          = args.rate,
+        volume        = args.volume,
+        skip_short    = args.skip_short,
+        max_chapters  = args.max_chapters,
+        merge         = args.merge,
+        start_page    = args.start_page,
+        end_page      = args.end_page,
+        skip_chapters = skip_set,
     )
     asyncio.run(converter.convert())
 

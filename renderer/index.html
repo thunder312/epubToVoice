@@ -57,14 +57,11 @@
         </label>
       </section>
 
-      <!-- Voice settings -->
+      <!-- Voice settings (always expanded) -->
       <section class="settings-section">
-        <button class="section-toggle" id="toggleVoice" aria-expanded="false">
-          <h2 class="section-title">Stimme &amp; Geschwindigkeit</h2>
-          <span class="toggle-arrow">▸</span>
-        </button>
+        <h2 class="section-title">Stimme &amp; Geschwindigkeit</h2>
 
-        <div class="collapsible" id="voiceSettings">
+        <div id="voiceSettings">
           <label class="field-label">Stimme</label>
           <div id="voiceStatus" class="voice-loading">Stimmen werden geladen…</div>
           <div class="voice-row" style="display:none" id="voiceRow">
@@ -131,6 +128,27 @@
   </div><!-- /app-body -->
 
 </div><!-- /app -->
+
+<!-- ── Preview Modal ──────────────────────────────────────────── -->
+<div id="previewModal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true">
+  <div class="modal-card">
+
+    <div class="modal-header">
+      <span id="modalTitle" class="modal-title"></span>
+      <button id="modalClose" class="modal-close" title="Schließen">✕</button>
+    </div>
+
+    <div id="modalBody" class="modal-body">
+      <!-- dynamically filled by renderer.js -->
+    </div>
+
+    <div class="modal-footer">
+      <button id="modalCancel" class="btn btn--secondary">Abbrechen</button>
+      <button id="modalApply"  class="btn btn--primary">Übernehmen</button>
+    </div>
+
+  </div>
+</div>
 
 <script src="renderer.js"></script>
 </body>

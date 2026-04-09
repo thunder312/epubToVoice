@@ -107,9 +107,198 @@ async function loadVoices() {
 }
 
 // ---------------------------------------------------------------------------
+// Preview modal
+// ---------------------------------------------------------------------------
+const previewModal  = $('previewModal');
+const modalTitle    = $('modalTitle');
+const modalBody     = $('modalBody');
+const modalClose    = $('modalClose');
+const modalCancel   = $('modalCancel');
+const modalApply    = $('modalApply');
+
+// Temporary state while modal is open
+let _previewJob     = null;   // queue item being previewed
+let _previewPending = {};     // {startPage, endPage, skipChapters:[]}
+
+function openPreview(jobId) {
+  const job = getJob(jobId);
+  if (!job) return;
+  _previewJob     = job;
+  _previewPending = {
+    startPage:    job.startPage    ?? null,
+    endPage:      job.endPage      ?? null,
+    skipChapters: [...(job.skipChapters ?? [])],
+  };
+
+  modalTitle.textContent = job.name;
+  modalBody.innerHTML    = '<div class="modal-loading">⏳ Vorschau wird geladen…</div>';
+  previewModal.style.display = 'flex';
+
+  // Use cached structure if available, else fetch
+  if (job.structure) {
+    renderPreviewBody(job.structure);
+  } else {
+    window.api.getStructure(job.path).then(data => {
+      job.structure = data;
+      renderPreviewBody(data);
+    });
+  }
+}
+
+function closePreview() {
+  previewModal.style.display = 'none';
+  _previewJob = null;
+}
+
+function renderPreviewBody(data) {
+  if (data.error) {
+    modalBody.innerHTML = `<p class="modal-error">⚠ ${escHtml(data.error)}</p>`;
+    return;
+  }
+  if (data.type === 'pdf')  renderPdfPreview(data);
+  else if (data.type === 'epub') renderEpubPreview(data);
+  else if (data.type === 'txt')  renderListPreview(data.sections, 'Abschnitt');
+  else modalBody.innerHTML = '<p class="modal-error">Unbekanntes Format</p>';
+}
+
+function renderPdfPreview(data) {
+  const start = _previewPending.startPage ?? 1;
+  const end   = _previewPending.endPage   ?? data.totalPages;
+  const more  = data.totalPages > data.thumbCount
+    ? `<p class="thumb-note">Vorschau: erste ${data.thumbCount} von ${data.totalPages} Seiten. Seitenbereich per Eingabe anpassen.</p>`
+    : '';
+
+  modalBody.innerHTML = `
+    <div class="pdf-range">
+      <label>Von Seite
+        <input type="number" id="rangeStart" class="input input--narrow"
+               min="1" max="${data.totalPages}" value="${start}">
+      </label>
+      <span class="range-sep">–</span>
+      <label>Bis Seite
+        <input type="number" id="rangeEnd" class="input input--narrow"
+               min="1" max="${data.totalPages}" value="${end}">
+      </label>
+      <span class="range-total">von ${data.totalPages} Seiten</span>
+    </div>
+    ${more}
+    <div class="thumb-strip" id="thumbStrip"></div>
+  `;
+
+  const strip = $('thumbStrip');
+  data.pages.forEach(p => {
+    const inRange = p.page >= start && p.page <= end;
+    const badge   = p.looksLikeCover ? '🖼 Cover'
+                  : p.looksLikeToc   ? '📋 Inhalt'
+                  : '';
+    const div = document.createElement('div');
+    div.className  = `thumb-item${inRange ? ' thumb-in' : ' thumb-out'}`;
+    div.dataset.page = p.page;
+    div.innerHTML  = `
+      <img src="data:image/png;base64,${p.thumbnail}" class="thumb-img" alt="Seite ${p.page}">
+      ${badge ? `<span class="thumb-badge">${badge}</span>` : ''}
+      <span class="thumb-num">S.${p.page}</span>
+    `;
+    div.title = p.textPreview || `Seite ${p.page}`;
+    div.addEventListener('click', () => toggleThumb(div, p.page, data.totalPages));
+    strip.appendChild(div);
+  });
+
+  // Sync inputs with thumbnail highlight
+  const syncHighlight = () => {
+    const s = parseInt($('rangeStart').value) || 1;
+    const e = parseInt($('rangeEnd').value)   || data.totalPages;
+    _previewPending.startPage = s;
+    _previewPending.endPage   = e;
+    strip.querySelectorAll('.thumb-item').forEach(el => {
+      const pg = parseInt(el.dataset.page);
+      el.classList.toggle('thumb-in',  pg >= s && pg <= e);
+      el.classList.toggle('thumb-out', pg < s  || pg > e);
+    });
+  };
+  $('rangeStart').addEventListener('input', syncHighlight);
+  $('rangeEnd').addEventListener('input',   syncHighlight);
+}
+
+function toggleThumb(el, page, total) {
+  const s = parseInt($('rangeStart')?.value) || 1;
+  const e = parseInt($('rangeEnd')?.value)   || total;
+  // clicking left half → set start, right half → set end
+  if (page <= s || page < (s + e) / 2) {
+    $('rangeStart').value = page;
+  } else {
+    $('rangeEnd').value = page;
+  }
+  $('rangeStart').dispatchEvent(new Event('input'));
+}
+
+function renderEpubPreview(data) {
+  renderListPreview(data.chapters, 'Kapitel');
+}
+
+function renderListPreview(items, label) {
+  const rows = items.map(item => {
+    const idx     = item.index;
+    const checked = !_previewPending.skipChapters.includes(idx);
+    const hint    = item.isToc ? ' <span class="item-hint">Inhalt</span>' : '';
+    const kb      = item.chars > 0 ? ` <span class="item-chars">${Math.round(item.chars/1000)}k</span>` : '';
+    return `
+      <label class="chapter-row${item.isToc ? ' chapter-row--toc' : ''}">
+        <input type="checkbox" data-idx="${idx}" ${checked ? 'checked' : ''}>
+        <span class="chapter-title">${escHtml(item.title || `${label} ${idx+1}`)}${hint}${kb}</span>
+      </label>`;
+  }).join('');
+
+  modalBody.innerHTML = `
+    <div class="chapter-actions">
+      <button class="btn btn--ghost btn--sm" id="chkAll">Alle</button>
+      <button class="btn btn--ghost btn--sm" id="chkNone">Keine</button>
+      <button class="btn btn--ghost btn--sm" id="chkAuto">Auto (TOC abwählen)</button>
+    </div>
+    <div class="chapter-list">${rows}</div>`;
+
+  const getChecked = () =>
+    [...modalBody.querySelectorAll('input[type=checkbox]')]
+      .filter(cb => !cb.checked).map(cb => parseInt(cb.dataset.idx));
+
+  const setAll = val => modalBody.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = val);
+
+  $('chkAll').addEventListener('click',  () => setAll(true));
+  $('chkNone').addEventListener('click', () => setAll(false));
+  $('chkAuto').addEventListener('click', () => {
+    modalBody.querySelectorAll('input[type=checkbox]').forEach(cb => {
+      const row = cb.closest('.chapter-row');
+      cb.checked = !row.classList.contains('chapter-row--toc');
+    });
+  });
+
+  modalBody.querySelectorAll('input[type=checkbox]').forEach(cb =>
+    cb.addEventListener('change', () => { _previewPending.skipChapters = getChecked(); })
+  );
+  // Init
+  _previewPending.skipChapters = getChecked();
+}
+
+// ---------------------------------------------------------------------------
 // Event bindings
 // ---------------------------------------------------------------------------
 function bindEvents() {
+  // Preview modal buttons
+  modalClose.addEventListener('click',  closePreview);
+  modalCancel.addEventListener('click', closePreview);
+  previewModal.addEventListener('click', e => { if (e.target === previewModal) closePreview(); });
+  modalApply.addEventListener('click', () => {
+    if (!_previewJob) return;
+    // Sync range inputs if PDF
+    if ($('rangeStart')) _previewPending.startPage = parseInt($('rangeStart').value) || null;
+    if ($('rangeEnd'))   _previewPending.endPage   = parseInt($('rangeEnd').value)   || null;
+    _previewJob.startPage    = _previewPending.startPage;
+    _previewJob.endPage      = _previewPending.endPage;
+    _previewJob.skipChapters = [..._previewPending.skipChapters];
+    closePreview();
+    renderQueue();
+  });
+
   // Drop zone
   dropZone.addEventListener('dragover', e => {
     e.preventDefault();
@@ -198,13 +387,6 @@ function bindEvents() {
     demoAudio.onended = () => { demoStatus.textContent = ''; demoAudio = null; };
   });
 
-  // Voice settings toggle
-  const toggleBtn   = $('toggleVoice');
-  const voicePanel  = $('voiceSettings');
-  toggleBtn.addEventListener('click', () => {
-    const open = voicePanel.classList.toggle('open');
-    toggleBtn.setAttribute('aria-expanded', open);
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -216,7 +398,7 @@ function addToQueue(epubPaths) {
   const newPaths = [];
   for (const p of epubPaths) {
     if (existing.has(p)) continue;
-    queue.push({ id: crypto.randomUUID(), path: p, name: baseName(p), status: 'queued', current: 0, total: 0, outputPath: null, subText: '' });
+    queue.push({ id: crypto.randomUUID(), path: p, name: baseName(p), status: 'queued', current: 0, total: 0, outputPath: null, subText: '', startPage: null, endPage: null, skipChapters: [], structure: null });
     newPaths.push(p);
   }
   if (newPaths.length) {
@@ -298,11 +480,18 @@ function buildJobEl(job) {
   const pct = job.total > 0 ? Math.round((job.current / job.total) * 100) : 0;
   const statusLabels = { queued: 'Wartend', processing: 'Läuft…', done: 'Fertig', error: 'Fehler', cancelled: 'Abgebrochen' };
 
+  const selHint = job.status === 'queued' && (job.startPage || job.endPage || job.skipChapters?.length)
+    ? `<span class="item-sel">✂ S.${job.startPage??'1'}–${job.endPage??'∞'}${job.skipChapters?.length ? ` · ${job.skipChapters.length} übersprungen` : ''}</span>`
+    : '';
+
   el.innerHTML = `
     <div class="item-top">
       <span class="item-name" title="${escHtml(job.path)}">${escHtml(job.name)}</span>
+      ${selHint}
       <span class="status status--${job.status}">${statusLabels[job.status] ?? job.status}</span>
-      ${job.status === 'queued' ? `<button class="item-remove" data-remove="${job.id}" title="Entfernen">✕</button>` : ''}
+      ${job.status === 'queued' ? `
+        <button class="item-preview" data-preview="${job.id}" title="Seitenauswahl / Vorschau">🔍</button>
+        <button class="item-remove"  data-remove="${job.id}"  title="Entfernen">✕</button>` : ''}
     </div>
     <div class="progress-wrap">
       <div class="progress-bar" style="width:${pct}%"></div>
@@ -315,6 +504,9 @@ function buildJobEl(job) {
   `;
 
   // Wire up buttons inside the item
+  el.querySelector('[data-preview]')?.addEventListener('click', e => {
+    openPreview(e.currentTarget.dataset.preview);
+  });
   el.querySelector('[data-remove]')?.addEventListener('click', e => {
     const id = e.currentTarget.dataset.remove;
     queue = queue.filter(j => j.id !== id);
@@ -367,16 +559,19 @@ async function startConversion(previewMode = false) {
     updateJobEl(job);
 
     const opts = {
-      jobId:       job.id,
-      epubPath:    job.path,
-      outputDir:   settings.outputDir || null,
-      voice:       settings.voice,
-      rate:        settings.rate,
-      volume:      settings.volume,
-      skipShort:   settings.skipShort,
-      maxChapters: previewMode ? 3 : null,
-      merge:       settings.merge,
-      createZip:   settings.createZip,
+      jobId:        job.id,
+      epubPath:     job.path,
+      outputDir:    settings.outputDir || null,
+      voice:        settings.voice,
+      rate:         settings.rate,
+      volume:       settings.volume,
+      skipShort:    settings.skipShort,
+      maxChapters:  previewMode ? 3 : null,
+      merge:        settings.merge,
+      createZip:    settings.createZip,
+      startPage:    job.startPage   ?? null,
+      endPage:      job.endPage     ?? null,
+      skipChapters: job.skipChapters ?? [],
     };
 
     const result = await window.api.startConversion(opts);
