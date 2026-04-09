@@ -218,6 +218,14 @@ def html_to_segments(html_bytes: bytes) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Custom exceptions
+# ---------------------------------------------------------------------------
+
+class TtsServerError(RuntimeError):
+    """Raised when the TTS server is unreachable or returns a service error."""
+
+
+# ---------------------------------------------------------------------------
 # Core converter
 # ---------------------------------------------------------------------------
 
@@ -531,11 +539,23 @@ class EpubConverter:
         return chapters, raw_title
 
     # ------------------------------------------------------------------
+    @staticmethod
+    def _is_network_error(exc: Exception) -> bool:
+        """Return True if the exception looks like a server/network connectivity failure."""
+        msg = str(exc).lower()
+        return any(k in msg for k in (
+            "getaddrinfo", "cannot connect", "connection refused",
+            "network is unreachable", "timed out", "ssl", "websocket",
+            "service unavailable", "503", "502",
+        ))
+
+    # ------------------------------------------------------------------
     async def _synthesise_chunk(self, segments: list[dict], out_path: Path) -> None:
         """
         Synthesise a segment chunk to MP3.
-        Primary:  SSML <break> tags (Option 1).
-        Fallback: spoken placeholder sentences (Option 3) if SSML fails.
+        Primary:  punctuation-based prosodic pauses (Option 1).
+        Fallback: spoken placeholder sentences (Option 3) if synthesis fails.
+        Raises TtsServerError for network/server failures so the caller can abort early.
         """
         ssml_text = segments_to_tts_text(segments)
         try:
@@ -545,7 +565,10 @@ class EpubConverter:
                 out_path.unlink()
                 raise RuntimeError("Edge-TTS lieferte eine leere/korrupte Datei.")
         except Exception as exc:
-            # --- Option 3 fallback ---
+            if self._is_network_error(exc):
+                raise TtsServerError(str(exc)) from exc
+
+            # --- Option 3 fallback (non-network errors only) ---
             print(
                 f"\n  ⚠  SSML fehlgeschlagen ({exc}).\n"
                 f"     Hinweis: Wechsle zu Option 3 (Platzhalter-Sätze) …",
@@ -553,11 +576,16 @@ class EpubConverter:
                 flush=True,
             )
             fallback = segments_to_fallback_text(segments)
-            communicate = edge_tts.Communicate(fallback, self.voice, rate=self.rate, volume=self.volume)
-            await communicate.save(str(out_path))
-            if out_path.exists() and out_path.stat().st_size < 1024:
-                out_path.unlink()
-                raise RuntimeError("Edge-TTS: Auch Fallback-Text (Option 3) führte zu einer leeren Datei.")
+            try:
+                communicate = edge_tts.Communicate(fallback, self.voice, rate=self.rate, volume=self.volume)
+                await communicate.save(str(out_path))
+                if out_path.exists() and out_path.stat().st_size < 1024:
+                    out_path.unlink()
+                    raise RuntimeError("Leere Datei.")
+            except Exception as exc2:
+                if self._is_network_error(exc2):
+                    raise TtsServerError(str(exc2)) from exc2
+                raise RuntimeError(f"Edge-TTS: Auch Fallback-Text (Option 3) fehlgeschlagen: {exc2}") from exc2
 
     # ------------------------------------------------------------------
     async def convert(self) -> None:
@@ -597,6 +625,8 @@ class EpubConverter:
         print(f"📑  Kapitel:   {len(chapters)}  |  Splits: {total}\n")
 
         produced: list[Path] = []
+        consecutive_errors = 0
+        MAX_CONSECUTIVE = 3   # abort after this many consecutive server errors
 
         for counter, (ch_idx, sp_idx, seg_chunk) in enumerate(jobs, start=1):
             filename = self.output_dir / f"{ch_idx:03d}_{sp_idx:03d}_{safe_book}.mp3"
@@ -607,8 +637,24 @@ class EpubConverter:
             try:
                 await self._synthesise_chunk(seg_chunk, filename)
                 produced.append(filename)
+                consecutive_errors = 0
                 print("✓")
+            except TtsServerError as exc:
+                consecutive_errors += 1
+                print(f"✗  SERVER NICHT ERREICHBAR: {exc}", flush=True)
+                if consecutive_errors >= MAX_CONSECUTIVE:
+                    print(
+                        f"\n❌  TTS-Server antwortet nicht (speech.platform.bing.com).\n"
+                        f"    Mögliche Ursachen:\n"
+                        f"      • Microsoft-Dienst temporär nicht verfügbar\n"
+                        f"      • Keine Internetverbindung\n"
+                        f"      • Firewall blockiert den Zugriff\n"
+                        f"    Konvertierung abgebrochen. Bitte später erneut versuchen.",
+                        file=sys.stderr,
+                    )
+                    sys.exit(2)
             except Exception as exc:
+                consecutive_errors = 0
                 print(f"✗  FEHLER: {exc}")
 
         if self.merge and produced:
