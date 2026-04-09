@@ -199,7 +199,11 @@ ipcMain.handle('load-voices', async () => {
   // Write a tiny temp script – avoids shell newline issues on Windows
   const tmpScript = path.join(app.getPath('temp'), 'etv_list_voices.py');
   fs.writeFileSync(tmpScript, [
-    'import asyncio, edge_tts',
+    'import asyncio, sys, edge_tts',
+    '# On Windows without a console (e.g. spawned from Electron) the default',
+    '# ProactorEventLoop can fail; SelectorEventLoop is more robust here.',
+    'if sys.platform == "win32":',
+    '    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())',
     'async def run():',
     '    vs = await edge_tts.list_voices()',
     '    for v in vs: print(v["ShortName"], v["Locale"], v["Gender"])',
@@ -207,7 +211,10 @@ ipcMain.handle('load-voices', async () => {
   ].join('\n'));
 
   return new Promise(resolve => {
-    const proc = spawn(cmd, [tmpScript], { shell: true });
+    const proc = spawn(cmd, [tmpScript], {
+      shell: false,
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+    });
     let out = '', err = '';
     proc.stdout.on('data', d => (out += d));
     proc.stderr.on('data', d => (err += d));
@@ -282,6 +289,8 @@ ipcMain.handle('demo-voice', async (event, { voice, rate, volume }) => {
 
   fs.writeFileSync(demoScript, [
     'import asyncio, edge_tts, sys',
+    'if sys.platform == "win32":',
+    '    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())',
     'TEXT = "Willkommen! Dies ist eine Hörprobe deiner gewählten Stimme. Ich lese Bücher vor – klar, natürlich und angenehm."',
     'async def run():',
     '    voice, rate, volume = sys.argv[1], sys.argv[2], sys.argv[3]',
