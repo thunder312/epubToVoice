@@ -57,6 +57,22 @@
         </label>
       </section>
 
+      <!-- Translation section -->
+      <section class="settings-section">
+        <h2 class="section-title">Übersetzung</h2>
+        <label class="toggle-label">
+          <input type="checkbox" id="chkTranslate">
+          <span class="toggle-text">Text vor Umwandlung übersetzen</span>
+        </label>
+        <div id="translateOptions" style="display:none">
+          <label class="field-label" style="margin-top:8px">Zielsprache</label>
+          <select id="translateTarget" class="input">
+            <option value="de">Englisch → Deutsch</option>
+          </select>
+          <p class="field-hint" style="margin-top:4px">Verwendet Google Translate (Internetverbindung erforderlich)</p>
+        </div>
+      </section>
+
       <!-- Voice settings (always expanded) -->
       <section class="settings-section">
         <h2 class="section-title">Stimme &amp; Geschwindigkeit</h2>

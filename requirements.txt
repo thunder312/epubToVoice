@@ -7,3 +7,4 @@ edge-tts>=6.1.9         # Free Microsoft Edge TTS (no API key required)
 lxml>=5.0               # Faster HTML parser for BeautifulSoup (optional but recommended)
 pymupdf>=1.23           # PDF text extraction
 langdetect>=1.0.9       # Language detection (optional but recommended; heuristic fallback if missing)
+deep_translator>=1.11.4 # Translation via Google Translate (optional; required for translation feature)

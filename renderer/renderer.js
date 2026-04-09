@@ -11,13 +11,14 @@ let unsubscribeProgress = null;
 let allVoices   = [];     // full list loaded at startup (for language-based filtering)
 
 const settings = {
-  outputDir: '',
-  merge:     false,
-  createZip: false,
-  voice:     'de-DE-ConradNeural',
-  rate:      '-10%',
-  volume:    '+0%',
-  skipShort: 60,
+  outputDir:   '',
+  merge:       false,
+  createZip:   false,
+  voice:       'de-DE-ConradNeural',
+  rate:        '-10%',
+  volume:      '+0%',
+  skipShort:   60,
+  translateTo: null,   // e.g. 'de' when translation is enabled
 };
 
 // ---------------------------------------------------------------------------
@@ -390,6 +391,22 @@ function bindEvents() {
     settings.skipShort = parseInt(skipShortIn.value) || 0;
   });
 
+  // Translation
+  $('chkTranslate').addEventListener('change', () => {
+    const enabled = $('chkTranslate').checked;
+    $('translateOptions').style.display = enabled ? '' : 'none';
+    if (enabled) {
+      settings.translateTo = $('translateTarget').value;
+      suggestVoiceForLang(settings.translateTo);
+    } else {
+      settings.translateTo = null;
+    }
+  });
+  $('translateTarget').addEventListener('change', () => {
+    settings.translateTo = $('translateTarget').value;
+    suggestVoiceForLang(settings.translateTo);
+  });
+
   btnStart.addEventListener('click',   () => startConversion(false));
   btnPreview.addEventListener('click', () => startConversion(true));
   btnCancel.addEventListener('click',  cancelConversion);
@@ -480,6 +497,61 @@ async function detectAndSuggestVoice(filePath) {
   langSuggest.style.display = 'flex';
 
   // Wire up pill clicks → set voice
+  langSuggest.querySelectorAll('.lang-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const voice = btn.dataset.voice;
+      voiceInput.value = voice;
+      settings.voice   = voice;
+      langSuggest.style.display = 'none';
+      log(`🌍 Stimme gewechselt zu: ${voice}`);
+    });
+  });
+
+  langSuggest.querySelector('.lang-dismiss').addEventListener('click', () => {
+    langSuggest.style.display = 'none';
+  });
+}
+
+// Locale prefix for a 2-letter language code (matches main.js LANG_LOCALE_PREFIX)
+const LANG_LOCALE_PREFIX = {
+  de: 'de-', en: 'en-', fr: 'fr-', es: 'es-', it: 'it-',
+  nl: 'nl-', pt: 'pt-', ru: 'ru-', zh: 'zh-', ja: 'ja-',
+  ko: 'ko-', pl: 'pl-', sv: 'sv-', da: 'da-', fi: 'fi-',
+  nb: 'nb-', tr: 'tr-', ar: 'ar-', hi: 'hi-', cs: 'cs-',
+};
+const LANG_NAMES = {
+  de: 'Deutsch', en: 'Englisch', fr: 'Französisch', es: 'Spanisch',
+  it: 'Italienisch', nl: 'Niederländisch', pt: 'Portugiesisch',
+  ru: 'Russisch', zh: 'Chinesisch', ja: 'Japanisch', ko: 'Koreanisch',
+  pl: 'Polnisch', sv: 'Schwedisch', da: 'Dänisch', fi: 'Finnisch',
+  nb: 'Norwegisch', tr: 'Türkisch', ar: 'Arabisch', hi: 'Hindi', cs: 'Tschechisch',
+};
+
+/**
+ * Show voice suggestion banner for a given 2-letter language code.
+ * Used when the user manually selects a translation target.
+ */
+function suggestVoiceForLang(langCode) {
+  const prefix   = LANG_LOCALE_PREFIX[langCode] || (langCode + '-');
+  const matching = allVoices.filter(v => v.locale.startsWith(prefix)).slice(0, 4);
+  if (!matching.length) return;
+
+  // Skip if the current voice already matches
+  if (voiceInput.value && voiceInput.value.startsWith(prefix.replace(/-$/, ''))) return;
+
+  const langName = LANG_NAMES[langCode] || langCode;
+  const pills    = matching.map(v =>
+    `<button class="lang-pill" data-voice="${escHtml(v.name)}" title="${escHtml(v.locale)} · ${escHtml(v.gender)}">${escHtml(v.name)}</button>`
+  ).join('');
+
+  langSuggest.innerHTML =
+    `<span class="lang-flag">🌍</span>` +
+    `<span class="lang-label">Übersetzung nach <strong>${escHtml(langName)}</strong> – empfohlene Stimmen:</span>` +
+    `<span class="lang-voices">${pills}</span>` +
+    `<button class="lang-dismiss" title="Schließen">✕</button>`;
+
+  langSuggest.style.display = 'flex';
+
   langSuggest.querySelectorAll('.lang-pill').forEach(btn => {
     btn.addEventListener('click', () => {
       const voice = btn.dataset.voice;
@@ -610,6 +682,7 @@ async function startConversion(previewMode = false) {
       startPage:    job.startPage   ?? null,
       endPage:      job.endPage     ?? null,
       skipChapters: job.skipChapters ?? [],
+      translateTo:  settings.translateTo || null,
     };
 
     const result = await window.api.startConversion(opts);

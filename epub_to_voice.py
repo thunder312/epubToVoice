@@ -235,6 +235,7 @@ class EpubConverter:
         start_page: int | None = None,      # PDF: first page to include (1-based)
         end_page: int | None = None,        # PDF: last page to include (1-based, inclusive)
         skip_chapters: set[int] | None = None,  # EPUB/TXT: doc-order indices to skip
+        translate_to: str | None = None,        # BCP-47 language code to translate into (e.g. "de")
     ):
         self.epub_path    = Path(epub_path)
         self.output_dir   = (
@@ -250,6 +251,7 @@ class EpubConverter:
         self.start_page    = start_page
         self.end_page      = end_page
         self.skip_chapters = skip_chapters or set()
+        self.translate_to  = translate_to or None
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -562,6 +564,17 @@ class EpubConverter:
         """Main entry point – convert all chapters to MP3 files."""
         self.output_dir.mkdir(parents=True, exist_ok=True)
         chapters, book_title = self._load_chapters()
+
+        if self.translate_to:
+            try:
+                chapters = translate_chapters(chapters, self.translate_to)
+            except ImportError:
+                print(
+                    "  ⚠  deep_translator nicht installiert – Übersetzung übersprungen.\n"
+                    "     Installieren mit: pip install deep_translator",
+                    file=sys.stderr,
+                )
+
         if self.max_chapters:
             chapters = chapters[:self.max_chapters]
 
@@ -731,6 +744,75 @@ def _structure_txt(path: Path) -> None:
         "title":    title,
         "sections": sections,
     }), flush=True)
+
+
+# ---------------------------------------------------------------------------
+# Translation
+# ---------------------------------------------------------------------------
+
+def _translate_texts(texts: list[str], target_lang: str, source_lang: str = "auto") -> list[str]:
+    """
+    Translate a list of texts using deep_translator (Google Translate).
+    Batches texts into chunks to stay under the ~5 000-char API limit.
+    Returns a list of translated strings aligned to the input list.
+    """
+    from deep_translator import GoogleTranslator
+
+    SEP   = "\n[|||]\n"   # separator that Google Translate reliably preserves
+    LIMIT = 4500           # safe per-request limit
+
+    results = list(texts)  # pre-fill with originals as fallback
+
+    batch_idx:  list[int] = []
+    batch_parts: list[str] = []
+    batch_len   = 0
+
+    def _flush(indices: list[int], parts: list[str]) -> None:
+        if not parts:
+            return
+        joined     = SEP.join(parts)
+        translator = GoogleTranslator(source=source_lang, target=target_lang)
+        translated = translator.translate(joined) or ""
+        split      = translated.split(SEP)
+        for i, idx in enumerate(indices):
+            results[idx] = split[i].strip() if i < len(split) else parts[i]
+
+    for idx, text in enumerate(texts):
+        needed = len(text) + len(SEP)
+        if batch_len + needed > LIMIT and batch_parts:
+            _flush(batch_idx, batch_parts)
+            batch_idx, batch_parts, batch_len = [], [], 0
+        batch_idx.append(idx)
+        batch_parts.append(text)
+        batch_len += needed
+
+    _flush(batch_idx, batch_parts)
+    return results
+
+
+def translate_chapters(chapters: list[dict], target_lang: str) -> list[dict]:
+    """Translate all segment texts in all chapters to target_lang in-place."""
+    all_texts: list[str]          = []
+    seg_map:   list[tuple[int, int]] = []  # (chapter_idx, seg_idx)
+
+    for ci, chapter in enumerate(chapters):
+        for si, seg in enumerate(chapter["segments"]):
+            all_texts.append(seg["text"])
+            seg_map.append((ci, si))
+
+    if not all_texts:
+        return chapters
+
+    print(f"🌐 Übersetze {len(all_texts)} Textblöcke nach {target_lang} …", flush=True)
+    translated = _translate_texts(all_texts, target_lang)
+
+    # Deep-copy chapters and write translations back
+    import copy
+    result = copy.deepcopy(chapters)
+    for i, (ci, si) in enumerate(seg_map):
+        result[ci]["segments"][si]["text"] = translated[i] or chapters[ci]["segments"][si]["text"]
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -906,6 +988,8 @@ Examples:
                         help='PDF: last page to convert (1-based, inclusive, default: last)')
     parser.add_argument("--skip-chapters", default="",
                         help='Comma-separated doc-order indices of chapters/sections to skip')
+    parser.add_argument("--translate-to", default="",
+                        help='Translate text to this language before TTS, e.g. "de" for German (requires deep_translator)')
     return parser
 
 
@@ -963,6 +1047,7 @@ def main() -> None:
         start_page    = args.start_page,
         end_page      = args.end_page,
         skip_chapters = skip_set,
+        translate_to  = args.translate_to or None,
     )
     asyncio.run(converter.convert())
 
