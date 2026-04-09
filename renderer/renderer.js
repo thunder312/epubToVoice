@@ -199,8 +199,10 @@ function renderPdfPreview(data) {
       ${badge ? `<span class="thumb-badge">${badge}</span>` : ''}
       <span class="thumb-num">S.${p.page}</span>
     `;
-    div.title = p.textPreview || `Seite ${p.page}`;
     div.addEventListener('click', () => toggleThumb(div, p.page, data.totalPages));
+    div.addEventListener('mouseenter', e => showThumbTooltip(e, p));
+    div.addEventListener('mousemove',  e => moveThumbTooltip(e));
+    div.addEventListener('mouseleave', () => hideThumbTooltip());
     strip.appendChild(div);
   });
 
@@ -218,6 +220,42 @@ function renderPdfPreview(data) {
   };
   $('rangeStart').addEventListener('input', syncHighlight);
   $('rangeEnd').addEventListener('input',   syncHighlight);
+}
+
+// Floating tooltip for page thumbnails
+let _tooltip = null;
+function _ensureTooltip() {
+  if (!_tooltip) {
+    _tooltip = document.createElement('div');
+    _tooltip.className = 'thumb-tooltip';
+    document.body.appendChild(_tooltip);
+  }
+  return _tooltip;
+}
+function showThumbTooltip(e, p) {
+  const tip  = _ensureTooltip();
+  const flag = p.looksLikeCover ? '🖼 Cover · ' : p.looksLikeToc ? '📋 Inhaltsverzeichnis · ' : '';
+  const text = (p.textPreview || '').trim();
+  // Format text as short paragraphs (split on long runs)
+  const lines = text.match(/.{1,60}(\s|$)/g) || [text];
+  tip.innerHTML =
+    `<div class="tip-header">${flag}Seite ${p.page}</div>` +
+    `<div class="tip-body">${escHtml(lines.slice(0, 6).join('\n'))}</div>`;
+  tip.style.display = 'block';
+  moveThumbTooltip(e);
+}
+function moveThumbTooltip(e) {
+  if (!_tooltip) return;
+  const x = e.clientX + 14;
+  const y = e.clientY + 14;
+  // Keep inside viewport
+  const tw = _tooltip.offsetWidth || 220;
+  const th = _tooltip.offsetHeight || 80;
+  _tooltip.style.left = (x + tw > window.innerWidth  ? e.clientX - tw - 8 : x) + 'px';
+  _tooltip.style.top  = (y + th > window.innerHeight ? e.clientY - th - 8 : y) + 'px';
+}
+function hideThumbTooltip() {
+  if (_tooltip) _tooltip.style.display = 'none';
 }
 
 function toggleThumb(el, page, total) {

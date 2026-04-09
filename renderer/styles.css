@@ -592,3 +592,31 @@ details[open] .log-summary::before { content: '▾ '; }
   border-radius: 20px; padding: 1px 8px;
   margin-right: 4px;
 }
+
+/* ── Page thumbnail tooltip ───────────────────────────────────────────── */
+.thumb-tooltip {
+  position: fixed;
+  display: none;
+  z-index: 2000;
+  pointer-events: none;
+  background: var(--surface-3);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  padding: 8px 10px;
+  max-width: 240px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.tip-header {
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 5px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+}
+.tip-body {
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
