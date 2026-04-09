@@ -16,7 +16,6 @@ Usage:
 
 import asyncio
 import argparse
-import html as html_lib
 import json
 import re
 import sys
@@ -89,34 +88,52 @@ def segments_to_plain_text(segments: list[dict]) -> str:
     return " ".join(seg["text"] for seg in segments)
 
 
-def segments_to_ssml_text(segments: list[dict]) -> str:
+def segments_to_tts_text(segments: list[dict]) -> str:
     """
-    Build text with embedded SSML <break> tags (Option 1).
+    Build TTS-ready text with punctuation-based prosodic pauses (Option 1).
 
-    edge-tts wraps this string in <speak>...<prosody>...</prosody>...</speak>,
-    so <break/> tags are valid XML inside the final SSML document.
-    Paragraph/heading text is XML-escaped so special characters don't break SSML.
+    NOTE: edge-tts XML-escapes the text before embedding it in SSML, so literal
+    <break> tags would be read aloud. Instead we use punctuation-based prosodic
+    pauses that the TTS engine interprets naturally:
+      • Before a heading  → "…" (ellipsis, ~1 s pause)
+      • After  a heading  → "." (period, short pause before body text)
+      • Between paragraphs→ text already ends with punctuation; one space suffices
     """
+    _SENTENCE_END = frozenset('.!?…\u201d\u00bb')   # ."!?…"»
+
     parts: list[str] = []
     for i, seg in enumerate(segments):
-        escaped = html_lib.escape(seg["text"])
+        text = seg["text"].strip()
+        if not text:
+            continue
+
         if seg["type"] == SEG_HEADING:
             if i > 0:
-                parts.append(f'<break time="{HEADING_PRE_BREAK}"/>')
-            parts.append(escaped)
-            parts.append(f'<break time="{HEADING_POST_BREAK}"/>')
+                parts.append(" \u2026 ")      # " … " – long prosodic pause before heading
+            # Ensure heading ends with a sentence-boundary so TTS pauses after it
+            if text[-1] not in _SENTENCE_END:
+                text += "."
+            parts.append(text)
+            parts.append(" ")                 # brief gap before body text
         else:
-            prev_is_heading = i > 0 and segments[i - 1]["type"] == SEG_HEADING
-            if i > 0 and not prev_is_heading:
-                parts.append(f'<break time="{PARA_BREAK}"/>')
-            parts.append(escaped)
+            if i > 0:
+                prev_is_heading = segments[i - 1]["type"] == SEG_HEADING
+                if not prev_is_heading:
+                    # Add a short pause between paragraphs via sentence boundary
+                    if parts and parts[-1][-1] not in _SENTENCE_END:
+                        parts.append(".")
+                    parts.append(" ")
+                else:
+                    parts.append(" ")
+            parts.append(text)
+
     return "".join(parts)
 
 
 def segments_to_fallback_text(segments: list[dict]) -> str:
     """
-    Option 3 fallback: replace SSML breaks with spoken placeholder sentences.
-    Used when SSML synthesis fails at runtime.
+    Option 3 fallback: spoken placeholder sentences at structural boundaries.
+    Used when the primary synthesis fails at runtime.
     """
     parts: list[str] = []
     for i, seg in enumerate(segments):
@@ -498,7 +515,7 @@ class EpubConverter:
         Primary:  SSML <break> tags (Option 1).
         Fallback: spoken placeholder sentences (Option 3) if SSML fails.
         """
-        ssml_text = segments_to_ssml_text(segments)
+        ssml_text = segments_to_tts_text(segments)
         try:
             communicate = edge_tts.Communicate(ssml_text, self.voice, rate=self.rate, volume=self.volume)
             await communicate.save(str(out_path))
