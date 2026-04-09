@@ -3,6 +3,10 @@
 epub_to_voice.py – EPUB / PDF / TXT to Audio Converter
 Uses edge-tts (Microsoft Edge TTS, free, no API key needed) for high-quality neural voices.
 
+Structure detection (headings, paragraphs) uses SSML <break> tags (Option 1).
+Where SSML is not possible, spoken placeholder sentences are used (Option 3) with a warning.
+Table of contents sections are automatically detected and skipped.
+
 Usage:
     python epub_to_voice.py book.epub
     python epub_to_voice.py book.pdf -o ./output -v de-DE-KatjaNeural -r "+10%"
@@ -12,6 +16,7 @@ Usage:
 
 import asyncio
 import argparse
+import html as html_lib
 import re
 import sys
 from pathlib import Path
@@ -25,83 +30,173 @@ import edge_tts
 # ---------------------------------------------------------------------------
 # Defaults
 # ---------------------------------------------------------------------------
-DEFAULT_VOICE = "de-DE-ConradNeural"  # Natural German male voice
-DEFAULT_RATE  = "-10%"                # Speech speed (e.g. "+15%" for faster)
-DEFAULT_VOLUME = "+0%"                # Volume adjustment
+DEFAULT_VOICE  = "de-DE-ConradNeural"
+DEFAULT_RATE   = "-10%"
+DEFAULT_VOLUME = "+0%"
 
 
 # ---------------------------------------------------------------------------
-# Text extraction helpers
+# Segment types & tag sets
 # ---------------------------------------------------------------------------
+SEG_HEADING   = "heading"
+SEG_PARAGRAPH = "paragraph"
 
-# Tags whose content we want to keep
-KEEP_TAGS = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "td", "th", "blockquote"}
-# Tags to skip entirely (navigation, scripts, styles)
-SKIP_TAGS = {"nav", "script", "style", "head"}
+KEEP_TAGS    = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "td", "th", "blockquote"}
+HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
+SKIP_TAGS    = {"nav", "script", "style", "head"}
 
+# TOC chapter title detection (case-insensitive)
+TOC_TITLE_RE = re.compile(
+    r"^\s*(inhalts?verzeichnis|inhalt|contents?|table\s+of\s+contents?|toc|sommaire|índice)\s*$",
+    re.IGNORECASE,
+)
+
+# SSML break durations
+HEADING_PRE_BREAK  = "1500ms"
+HEADING_POST_BREAK = "800ms"
+PARA_BREAK         = "400ms"
+
+
+# ---------------------------------------------------------------------------
+# Text / segment helpers
+# ---------------------------------------------------------------------------
 
 def sanitize_text(text: str) -> str:
-    """Remove characters that confuse TTS engines (replacement chars, control chars)."""
-    # Drop Unicode replacement character and other non-printable control chars
-    # but keep normal whitespace (space, tab, newline)
-    text = text.replace("\ufffd", "")                          # U+FFFD replacement char
-    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)  # control chars
+    """Remove control characters and normalize whitespace."""
+    text = text.replace("\ufffd", "")
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
 
-def html_to_text(html_bytes: bytes) -> str:
-    """Extract clean readable text from an EPUB HTML chunk."""
-    soup = BeautifulSoup(html_bytes, "html.parser")
-
-    # Remove unwanted tags completely
-    for tag in soup(SKIP_TAGS):
-        tag.decompose()
-
-    parts = []
-    for element in soup.find_all(KEEP_TAGS):
-        text = element.get_text(" ", strip=True)
-        if text:
-            parts.append(text)
-
-    # Fallback: plain get_text if no recognised tags found
-    if not parts:
-        text = soup.get_text(" ", strip=True)
-        parts = [text] if text else []
-
-    raw = " ".join(parts)
-    return sanitize_text(raw)
+def is_toc_title(title: str) -> bool:
+    """Return True if the title matches common TOC heading patterns."""
+    return bool(TOC_TITLE_RE.match(title.strip()))
 
 
-def chunk_text(text: str, max_chars: int = 4900) -> list[str]:
+def is_toc_content(text: str) -> bool:
+    """Heuristic: True if >40% of non-empty lines look like TOC entries (end with page numbers)."""
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    if len(lines) < 5:
+        return False
+    toc_lines = sum(1 for l in lines if re.search(r"[\.\s]{3,}\d+\s*$", l))
+    return toc_lines / len(lines) > 0.4
+
+
+def segments_to_plain_text(segments: list[dict]) -> str:
+    """Collapse segments to plain text (used for length checks and TOC detection)."""
+    return " ".join(seg["text"] for seg in segments)
+
+
+def segments_to_ssml_text(segments: list[dict]) -> str:
     """
-    Split text into chunks ≤ max_chars without cutting in the middle of a sentence.
-    edge-tts has an undocumented limit around 5 000 characters per request.
+    Build text with embedded SSML <break> tags (Option 1).
+
+    edge-tts wraps this string in <speak>...<prosody>...</prosody>...</speak>,
+    so <break/> tags are valid XML inside the final SSML document.
+    Paragraph/heading text is XML-escaped so special characters don't break SSML.
     """
-    if len(text) <= max_chars:
-        return [text]
-
-    chunks: list[str] = []
-    # Split on sentence-ending punctuation to find good break points
-    sentences = re.split(r"(?<=[.!?])\s+", text)
-    current = ""
-
-    for sentence in sentences:
-        if len(current) + len(sentence) + 1 <= max_chars:
-            current = (current + " " + sentence).strip()
+    parts: list[str] = []
+    for i, seg in enumerate(segments):
+        escaped = html_lib.escape(seg["text"])
+        if seg["type"] == SEG_HEADING:
+            if i > 0:
+                parts.append(f'<break time="{HEADING_PRE_BREAK}"/>')
+            parts.append(escaped)
+            parts.append(f'<break time="{HEADING_POST_BREAK}"/>')
         else:
+            prev_is_heading = i > 0 and segments[i - 1]["type"] == SEG_HEADING
+            if i > 0 and not prev_is_heading:
+                parts.append(f'<break time="{PARA_BREAK}"/>')
+            parts.append(escaped)
+    return "".join(parts)
+
+
+def segments_to_fallback_text(segments: list[dict]) -> str:
+    """
+    Option 3 fallback: replace SSML breaks with spoken placeholder sentences.
+    Used when SSML synthesis fails at runtime.
+    """
+    parts: list[str] = []
+    for i, seg in enumerate(segments):
+        if i > 0:
+            parts.append("Neues Kapitel." if seg["type"] == SEG_HEADING else "Weiter.")
+        parts.append(seg["text"])
+    return " ".join(parts)
+
+
+def chunk_segments(segments: list[dict], max_chars: int = 4900) -> list[list[dict]]:
+    """
+    Group segments into chunks whose combined text fits within max_chars.
+    Splits within a segment only when a single segment exceeds max_chars.
+    """
+    chunks: list[list[dict]] = []
+    current: list[dict] = []
+    current_len = 0
+
+    for seg in segments:
+        seg_len = len(seg["text"])
+
+        if seg_len > max_chars:
+            # Flush current chunk first
             if current:
                 chunks.append(current)
-            # If a single sentence is longer than max_chars, hard-split it
-            while len(sentence) > max_chars:
-                chunks.append(sentence[:max_chars])
-                sentence = sentence[max_chars:]
-            current = sentence
+                current, current_len = [], 0
+            # Hard-split the oversized segment at sentence boundaries
+            sentences = re.split(r"(?<=[.!?])\s+", seg["text"])
+            buf = ""
+            for sent in sentences:
+                if len(buf) + len(sent) + 1 <= max_chars:
+                    buf = (buf + " " + sent).strip()
+                else:
+                    if buf:
+                        chunks.append([{"type": seg["type"], "text": buf}])
+                    while len(sent) > max_chars:
+                        chunks.append([{"type": seg["type"], "text": sent[:max_chars]}])
+                        sent = sent[max_chars:]
+                    buf = sent
+            if buf:
+                chunks.append([{"type": seg["type"], "text": buf}])
+
+        elif current_len + seg_len + 1 > max_chars:
+            chunks.append(current)
+            current, current_len = [seg], seg_len
+
+        else:
+            current.append(seg)
+            current_len += seg_len + 1
 
     if current:
         chunks.append(current)
 
     return chunks
+
+
+# ---------------------------------------------------------------------------
+# EPUB helpers
+# ---------------------------------------------------------------------------
+
+def html_to_segments(html_bytes: bytes) -> list[dict]:
+    """Extract structured segments (headings + paragraphs) from an EPUB HTML chunk."""
+    soup = BeautifulSoup(html_bytes, "html.parser")
+    for tag in soup(SKIP_TAGS):
+        tag.decompose()
+
+    segments: list[dict] = []
+    for element in soup.find_all(KEEP_TAGS):
+        text = sanitize_text(element.get_text(" ", strip=True))
+        if not text:
+            continue
+        seg_type = SEG_HEADING if element.name in HEADING_TAGS else SEG_PARAGRAPH
+        segments.append({"type": seg_type, "text": text})
+
+    # Fallback: no recognised tags → treat full text as one paragraph
+    if not segments:
+        text = sanitize_text(soup.get_text(" ", strip=True))
+        if text:
+            segments.append({"type": SEG_PARAGRAPH, "text": text})
+
+    return segments
 
 
 # ---------------------------------------------------------------------------
@@ -122,16 +217,15 @@ class EpubConverter:
     ):
         self.epub_path    = Path(epub_path)
         self.output_dir   = (
-            Path(output_dir)
-            if output_dir
+            Path(output_dir) if output_dir
             else self.epub_path.parent / self.epub_path.stem
         )
         self.voice        = voice
         self.rate         = rate
         self.volume       = volume
-        self.skip_short   = skip_short      # chapters with fewer chars are skipped
-        self.max_chapters = max_chapters    # None = all
-        self.merge        = merge           # concatenate all splits into one MP3
+        self.skip_short   = skip_short
+        self.max_chapters = max_chapters
+        self.merge        = merge
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -141,8 +235,7 @@ class EpubConverter:
             if sep in raw:
                 raw = raw.split(sep, 1)[-1].strip()
                 break
-        raw = re.sub(r"\s*\([^)]*\)\s*$", "", raw).strip()
-        return raw
+        return re.sub(r"\s*\([^)]*\)\s*$", "", raw).strip()
 
     # ------------------------------------------------------------------
     def _load_chapters(self) -> tuple[list[dict], str]:
@@ -178,95 +271,253 @@ class EpubConverter:
         raw   = meta[0][0].strip() if meta else self.epub_path.stem
         title = self._clean_title(raw) or self.epub_path.stem
 
-        items    = {item.get_id(): item for item in book.get_items()}
-        chapters: list[dict] = []
+        items       = {item.get_id(): item for item in book.get_items()}
+        chapters:   list[dict] = []
+        skipped_toc = 0
 
         for spine_id, _ in book.spine:
             item = items.get(spine_id)
             if item is None or item.get_type() != ebooklib.ITEM_DOCUMENT:
                 continue
-            text = html_to_text(item.get_content())
-            if len(text) < self.skip_short:
+
+            segments = html_to_segments(item.get_content())
+            if not segments:
                 continue
-            soup  = BeautifulSoup(item.get_content(), "html.parser")
-            h_tag = soup.find(["h1", "h2", "h3"])
-            chapter_title = h_tag.get_text(strip=True) if h_tag else item.get_name()
-            chapters.append({"title": chapter_title, "text": text})
+
+            plain = segments_to_plain_text(segments)
+            if len(plain) < self.skip_short:
+                continue
+
+            # Determine chapter title from first heading or item name
+            soup     = BeautifulSoup(item.get_content(), "html.parser")
+            h_tag    = soup.find(["h1", "h2", "h3"])
+            ch_title = h_tag.get_text(strip=True) if h_tag else item.get_name()
+
+            # Skip TOC chapters (nav tags are already removed by html_to_segments;
+            # this catches TOC chapters that appear in the spine)
+            if is_toc_title(ch_title) or is_toc_content(plain):
+                skipped_toc += 1
+                print(f"  ⏭  Inhaltsverzeichnis übersprungen: {ch_title!r}")
+                continue
+
+            chapters.append({"title": ch_title, "segments": segments})
+
+        if skipped_toc:
+            print(f"  ℹ  {skipped_toc} Inhaltsverzeichnis-Kapitel übersprungen.\n")
 
         return chapters, title
 
     # ------------------------------------------------------------------
     def _load_pdf(self) -> tuple[list[dict], str]:
-        """Read a PDF and return (chapters grouped by pages, clean title)."""
+        """
+        Read a PDF and return (chapters, clean title).
+        Attempts heading detection via font-size comparison (Option 1).
+        Falls back to paragraph-only structure with a warning if sizes are uniform.
+        """
         import fitz  # pymupdf
 
         doc   = fitz.open(str(self.epub_path))
         raw   = (doc.metadata.get("title") or "").strip() or self.epub_path.stem
         title = self._clean_title(raw) or self.epub_path.stem
 
-        # Accumulate page text; start a new chapter when accumulated ≥ TARGET chars
+        # --- Detect heading font-size threshold ---
+        font_sizes: list[float] = []
+        for page in doc:
+            for block in page.get_text("dict")["blocks"]:
+                if block.get("type") != 0:   # 0 = text block
+                    continue
+                for line in block.get("lines", []):
+                    for span in line.get("spans", []):
+                        if span.get("text", "").strip():
+                            font_sizes.append(span["size"])
+
+        has_heading_detection = False
+        heading_threshold     = float("inf")
+        if font_sizes:
+            sorted_sizes = sorted(font_sizes)
+            median_size  = sorted_sizes[len(sorted_sizes) // 2]
+            max_size     = sorted_sizes[-1]
+            # Only use heading detection when there is meaningful size variation (≥15%)
+            if max_size > median_size * 1.15:
+                heading_threshold     = median_size * 1.15
+                has_heading_detection = True
+
+        if not has_heading_detection:
+            print(
+                "  ℹ  Hinweis (PDF): Überschriften konnten nicht per Schriftgröße erkannt werden –\n"
+                "     alle Textblöcke werden als Absätze behandelt (SSML-Absatz-Pausen aktiv).\n"
+                "     Tipp: Option 3 (Platzhalter-Sätze) wäre eine Alternative für\n"
+                "     noch klarere Strukturierung bei uniform gesetzten PDFs.",
+                file=sys.stderr,
+            )
+
+        # --- Extract segments page by page, group into chapters ---
         TARGET    = 15_000
         chapters: list[dict] = []
-        buf       = ""
+        cur_segs: list[dict] = []
+        cur_len   = 0
         page_start = 1
+        skipped_toc = 0
 
         for i, page in enumerate(doc, start=1):
-            buf += page.get_text()
+            if has_heading_detection:
+                for block in page.get_text("dict")["blocks"]:
+                    if block.get("type") != 0:
+                        continue
+                    block_parts: list[str] = []
+                    is_heading = False
+                    for line in block.get("lines", []):
+                        for span in line.get("spans", []):
+                            t = sanitize_text(span.get("text", ""))
+                            if t:
+                                block_parts.append(t)
+                                if span["size"] >= heading_threshold:
+                                    is_heading = True
+                    block_text = " ".join(block_parts).strip()
+                    if block_text:
+                        seg_type = SEG_HEADING if is_heading else SEG_PARAGRAPH
+                        cur_segs.append({"type": seg_type, "text": block_text})
+                        cur_len += len(block_text)
+            else:
+                page_text = sanitize_text(page.get_text())
+                if page_text:
+                    cur_segs.append({"type": SEG_PARAGRAPH, "text": page_text})
+                    cur_len += len(page_text)
+
             at_end = (i == len(doc))
-            if len(buf) >= TARGET or at_end:
-                text = sanitize_text(buf)
-                if len(text) >= self.skip_short:
-                    label = f"Seiten {page_start}–{i}" if page_start < i else f"Seite {i}"
-                    chapters.append({"title": label, "text": text})
-                buf        = ""
+            if cur_len >= TARGET or at_end:
+                plain = segments_to_plain_text(cur_segs)
+                label = f"Seiten {page_start}–{i}" if page_start < i else f"Seite {i}"
+                if len(plain) >= self.skip_short:
+                    if is_toc_content(plain):
+                        skipped_toc += 1
+                        print(f"  ⏭  Inhaltsverzeichnis übersprungen: {label}")
+                    else:
+                        chapters.append({"title": label, "segments": cur_segs})
+                cur_segs   = []
+                cur_len    = 0
                 page_start = i + 1
 
         doc.close()
+        if skipped_toc:
+            print(f"  ℹ  {skipped_toc} Inhaltsverzeichnis-Seite(n) übersprungen.\n")
+
         return chapters, title
 
     # ------------------------------------------------------------------
     def _load_txt(self) -> tuple[list[dict], str]:
-        """Read a plain-text file and return (sections as chapters, clean title)."""
+        """
+        Read a plain-text file and return (sections as chapters, clean title).
+        Detects headings via common keywords; splits on double-newlines for paragraphs.
+        """
         raw_title = self._clean_title(self.epub_path.stem) or self.epub_path.stem
+        content   = self.epub_path.read_text(encoding="utf-8", errors="replace")
 
-        content = self.epub_path.read_text(encoding="utf-8", errors="replace")
-
-        # Split on lines that look like chapter headings or on multiple blank lines
-        HEADING = re.compile(
-            r"(?m)^(?:Kapitel|Chapter|Teil|Part|Abschnitt|Section)\s+\S.*$"
+        HEADING_RE = re.compile(
+            r"(?m)^(?:Kapitel|Chapter|Teil|Part|Abschnitt|Section|Epilog|Prolog|Vorwort|Nachwort)\s+\S.*$"
         )
-        # Mark split points then split
-        marked  = HEADING.sub("\x00\\g<0>", content)
-        parts   = re.split(r"\x00|\n{3,}", marked)
 
-        chapters: list[dict] = []
-        for i, part in enumerate(parts, start=1):
-            text = sanitize_text(part)
+        # Build flat list of segments, marking headings
+        segments_raw: list[dict] = []
+        last_end = 0
+
+        for m in HEADING_RE.finditer(content):
+            # Paragraphs before this heading
+            before = content[last_end:m.start()]
+            for para in re.split(r"\n{2,}", before):
+                text = sanitize_text(para)
+                if len(text) >= self.skip_short:
+                    segments_raw.append({"type": SEG_PARAGRAPH, "text": text})
+            # The heading line
+            heading_text = sanitize_text(m.group(0))
+            if heading_text:
+                segments_raw.append({"type": SEG_HEADING, "text": heading_text})
+            last_end = m.end()
+
+        # Remaining text after the last heading
+        for para in re.split(r"\n{2,}", content[last_end:]):
+            text = sanitize_text(para)
             if len(text) >= self.skip_short:
-                # Use first non-empty line as title if it's short enough
-                first_line = part.strip().splitlines()[0][:80] if part.strip() else f"Abschnitt {i}"
-                chapters.append({"title": first_line, "text": text})
+                segments_raw.append({"type": SEG_PARAGRAPH, "text": text})
 
-        # Fallback: no sections found → split into equal chunks
-        if not chapters:
-            full = sanitize_text(content)
+        # No headings found → split on paragraph breaks only
+        if not segments_raw:
+            for para in re.split(r"\n{2,}", content):
+                text = sanitize_text(para)
+                if len(text) >= self.skip_short:
+                    segments_raw.append({"type": SEG_PARAGRAPH, "text": text})
+
+        # Further fallback: no paragraphs → equal-size chunks
+        if not segments_raw:
+            full  = sanitize_text(content)
             CHUNK = 20_000
-            for i, start in enumerate(range(0, len(full), CHUNK), start=1):
+            for start in range(0, len(full), CHUNK):
                 text = full[start:start + CHUNK]
                 if len(text) >= self.skip_short:
-                    chapters.append({"title": f"Abschnitt {i}", "text": text})
+                    segments_raw.append({"type": SEG_PARAGRAPH, "text": text})
+
+        # Group flat segments into logical chapters (split at heading boundaries)
+        chapters:    list[dict] = []
+        current:     list[dict] = []
+        skipped_toc = 0
+
+        def flush_chapter(segs: list[dict]) -> None:
+            nonlocal skipped_toc
+            if not segs:
+                return
+            plain            = segments_to_plain_text(segs)
+            title_candidate  = (
+                segs[0]["text"][:80]
+                if segs[0]["type"] == SEG_HEADING
+                else f"Abschnitt {len(chapters) + 1}"
+            )
+            if is_toc_title(title_candidate) or is_toc_content(plain):
+                skipped_toc += 1
+                print(f"  ⏭  Inhaltsverzeichnis übersprungen: {title_candidate!r}")
+            else:
+                chapters.append({"title": title_candidate, "segments": segs})
+
+        for seg in segments_raw:
+            if seg["type"] == SEG_HEADING and current:
+                flush_chapter(current)
+                current = [seg]
+            else:
+                current.append(seg)
+        flush_chapter(current)
+
+        if skipped_toc:
+            print(f"  ℹ  {skipped_toc} Inhaltsverzeichnis-Abschnitt(e) übersprungen.\n")
 
         return chapters, raw_title
 
     # ------------------------------------------------------------------
-    async def _synthesise_chunk(self, text: str, out_path: Path) -> None:
-        """Synthesise a single text chunk (≤ max_chars) to one MP3 file."""
-        communicate = edge_tts.Communicate(text, self.voice, rate=self.rate, volume=self.volume)
-        await communicate.save(str(out_path))
-        # Sanity-check: an MP3 with audio is always > 1 KB
-        if out_path.exists() and out_path.stat().st_size < 1024:
-            out_path.unlink()
-            raise RuntimeError(f"Edge-TTS produced an empty/corrupt file – text may contain unsupported characters.")
+    async def _synthesise_chunk(self, segments: list[dict], out_path: Path) -> None:
+        """
+        Synthesise a segment chunk to MP3.
+        Primary:  SSML <break> tags (Option 1).
+        Fallback: spoken placeholder sentences (Option 3) if SSML fails.
+        """
+        ssml_text = segments_to_ssml_text(segments)
+        try:
+            communicate = edge_tts.Communicate(ssml_text, self.voice, rate=self.rate, volume=self.volume)
+            await communicate.save(str(out_path))
+            if out_path.exists() and out_path.stat().st_size < 1024:
+                out_path.unlink()
+                raise RuntimeError("Edge-TTS lieferte eine leere/korrupte Datei.")
+        except Exception as exc:
+            # --- Option 3 fallback ---
+            print(
+                f"\n  ⚠  SSML fehlgeschlagen ({exc}).\n"
+                f"     Hinweis: Wechsle zu Option 3 (Platzhalter-Sätze) …",
+                end="",
+                flush=True,
+            )
+            fallback = segments_to_fallback_text(segments)
+            communicate = edge_tts.Communicate(fallback, self.voice, rate=self.rate, volume=self.volume)
+            await communicate.save(str(out_path))
+            if out_path.exists() and out_path.stat().st_size < 1024:
+                out_path.unlink()
+                raise RuntimeError("Edge-TTS: Auch Fallback-Text (Option 3) führte zu einer leeren Datei.")
 
     # ------------------------------------------------------------------
     async def convert(self) -> None:
@@ -277,49 +528,48 @@ class EpubConverter:
             chapters = chapters[:self.max_chapters]
 
         if not chapters:
-            print("⚠  No readable chapters found – is this a valid EPUB?", file=sys.stderr)
+            print("⚠  Keine lesbaren Kapitel gefunden – ist die Datei gültig?", file=sys.stderr)
             sys.exit(1)
 
         safe_book = re.sub(r'[\\/:*?"<>|]', "_", book_title)[:80]
 
-        # Pre-compute all (chapter_idx, split_idx, chunk) tuples so we know the total
-        jobs: list[tuple[int, int, str]] = []
+        # Pre-compute all (chapter_idx, split_idx, segment_chunk) tuples
+        jobs: list[tuple[int, int, list[dict]]] = []
         for ch_idx, chapter in enumerate(chapters, start=1):
-            for sp_idx, chunk in enumerate(chunk_text(chapter["text"]), start=1):
-                jobs.append((ch_idx, sp_idx, chunk))
+            for sp_idx, seg_chunk in enumerate(chunk_segments(chapter["segments"]), start=1):
+                jobs.append((ch_idx, sp_idx, seg_chunk))
 
         total = len(jobs)
-        print(f"📖  Book:     {book_title}")
-        print(f"🔊  Voice:    {self.voice}  |  Rate: {self.rate}")
-        print(f"📂  Output:   {self.output_dir}")
-        print(f"📑  Chapters: {len(chapters)}  |  Splits: {total}\n")
+        print(f"📖  Buch:      {book_title}")
+        print(f"🔊  Stimme:    {self.voice}  |  Rate: {self.rate}")
+        print(f"📂  Ausgabe:   {self.output_dir}")
+        print(f"📑  Kapitel:   {len(chapters)}  |  Splits: {total}\n")
 
         produced: list[Path] = []
 
-        for counter, (ch_idx, sp_idx, chunk) in enumerate(jobs, start=1):
+        for counter, (ch_idx, sp_idx, seg_chunk) in enumerate(jobs, start=1):
             filename = self.output_dir / f"{ch_idx:03d}_{sp_idx:03d}_{safe_book}.mp3"
-            chars    = len(chunk)
+            chars    = sum(len(s["text"]) for s in seg_chunk)
 
-            print(f"  [{counter:>3}/{total}]  {ch_idx:03d}_{sp_idx:03d}  ({chars:,} chars) … ", end="", flush=True)
+            print(f"  [{counter:>3}/{total}]  {ch_idx:03d}_{sp_idx:03d}  ({chars:,} Zeichen) … ", end="", flush=True)
 
             try:
-                await self._synthesise_chunk(chunk, filename)
+                await self._synthesise_chunk(seg_chunk, filename)
                 produced.append(filename)
                 print("✓")
             except Exception as exc:
-                print(f"✗  ERROR: {exc}")
+                print(f"✗  FEHLER: {exc}")
 
         if self.merge and produced:
             merged = self.output_dir / f"{safe_book}.mp3"
-            print(f"\n🔗  Merging {len(produced)} file(s) → {merged.name} … ", end="", flush=True)
+            print(f"\n🔗  Zusammenführen von {len(produced)} Datei(en) → {merged.name} … ", end="", flush=True)
             with open(merged, "wb") as fout:
                 for part in produced:
                     fout.write(part.read_bytes())
                     part.unlink()
             print("✓")
-            print(f"\n✅  Done! Files saved to: {self.output_dir}")
-        else:
-            print(f"\n✅  Done! Files saved to: {self.output_dir}")
+
+        print(f"\n✅  Fertig! Dateien gespeichert in: {self.output_dir}")
 
 
 # ---------------------------------------------------------------------------
@@ -327,7 +577,7 @@ class EpubConverter:
 # ---------------------------------------------------------------------------
 
 async def list_voices_cmd(filter_str: str = "") -> None:
-    voices = await edge_tts.list_voices()
+    voices   = await edge_tts.list_voices()
     filtered = [v for v in voices if filter_str.lower() in v["ShortName"].lower()] if filter_str else voices
     print(f"{'Short Name':<35}  {'Locale':<10}  Gender")
     print("-" * 60)
@@ -338,7 +588,7 @@ async def list_voices_cmd(filter_str: str = "") -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Lightweight EPUB → MP3 converter powered by edge-tts.",
+        description="Lightweight EPUB / PDF / TXT → MP3 converter powered by edge-tts.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -347,18 +597,18 @@ Examples:
   python epub_to_voice.py --list-voices de
         """,
     )
-    parser.add_argument("epub", nargs="?", help="Path to the .epub file")
-    parser.add_argument("-o", "--output",  help="Output directory (default: <epub_stem>/)")
+    parser.add_argument("epub",            nargs="?", help="Path to the .epub, .pdf, or .txt file")
+    parser.add_argument("-o", "--output",  help="Output directory (default: <stem>/)")
     parser.add_argument("-v", "--voice",   default=DEFAULT_VOICE, help=f"TTS voice (default: {DEFAULT_VOICE})")
     parser.add_argument("-r", "--rate",    default=DEFAULT_RATE,  help='Speech rate, e.g. "+15%%" or "-10%%"')
     parser.add_argument("--volume",        default=DEFAULT_VOLUME, help='Volume, e.g. "+10%%"')
     parser.add_argument("--skip-short",    type=int, default=60,
-                        help="Skip chapters with fewer than N characters (default: 60)")
+                        help="Skip chapters/sections with fewer than N characters (default: 60)")
     parser.add_argument("--max-chapters",  type=int, default=None,
                         help="Convert only the first N chapters (e.g. 3 for a preview)")
-    parser.add_argument("--merge", action="store_true",
+    parser.add_argument("--merge",         action="store_true",
                         help="Concatenate all splits into a single MP3 file")
-    parser.add_argument("--list-voices",  nargs="?", const="", metavar="FILTER",
+    parser.add_argument("--list-voices",   nargs="?", const="", metavar="FILTER",
                         help='List available voices, optionally filtered (e.g. --list-voices de)')
     return parser
 
@@ -378,10 +628,10 @@ def main() -> None:
     SUPPORTED = {".epub", ".pdf", ".txt"}
     epub_path = Path(args.epub)
     if not epub_path.exists():
-        print(f"Error: File not found: {epub_path}", file=sys.stderr)
+        print(f"Fehler: Datei nicht gefunden: {epub_path}", file=sys.stderr)
         sys.exit(1)
     if epub_path.suffix.lower() not in SUPPORTED:
-        print(f"Error: Unsupported format '{epub_path.suffix}'. Supported: {', '.join(SUPPORTED)}", file=sys.stderr)
+        print(f"Fehler: Nicht unterstütztes Format '{epub_path.suffix}'. Unterstützt: {', '.join(SUPPORTED)}", file=sys.stderr)
         sys.exit(1)
 
     converter = EpubConverter(
