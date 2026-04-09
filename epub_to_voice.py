@@ -16,9 +16,11 @@ Usage:
 
 import asyncio
 import argparse
+import html as _html
 import json
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import ebooklib
@@ -223,6 +225,113 @@ def html_to_segments(html_bytes: bytes) -> list[dict]:
 
 class TtsServerError(RuntimeError):
     """Raised when the TTS server is unreachable or returns a service error."""
+
+
+# ---------------------------------------------------------------------------
+# HTML conversion log
+# ---------------------------------------------------------------------------
+
+class HtmlLog:
+    """
+    Writes a colour-coded HTML log file to the output directory.
+    Each entry gets an elapsed-time timestamp.
+    Also mirrors every message to stdout.
+    """
+
+    _CSS = """
+    body{font-family:'Consolas','Courier New',monospace;background:#1e1e2e;
+         color:#cdd6f4;padding:28px;margin:0;line-height:1.55}
+    h1{color:#89b4fa;margin:0 0 4px;font-size:1.25em}
+    .meta{color:#6c7086;margin-bottom:22px;font-size:.88em}
+    .meta b{color:#a6adc8;margin-right:18px}
+    table{width:100%;border-collapse:collapse;font-size:.93em}
+    tr:hover td{background:#24243e}
+    td{padding:2px 6px;vertical-align:top}
+    .ts{color:#45475a;white-space:nowrap;width:72px;font-size:.82em;padding-top:3px}
+    .ok   {color:#a6e3a1}
+    .error{color:#f38ba8;font-weight:bold}
+    .warn {color:#fab387}
+    .info {color:#cdd6f4}
+    .dim  {color:#585b70}
+    .sep  {color:#313244;padding:4px 0}
+    .footer{margin-top:24px;padding-top:14px;border-top:1px solid #313244;
+            color:#6c7086;font-size:.88em}
+    .s-ok {color:#a6e3a1} .s-err{color:#f38ba8} .s-warn{color:#fab387}
+    """
+
+    def __init__(self, path: Path, title: str, meta: dict) -> None:
+        self._path   = path
+        self._f      = open(path, "w", encoding="utf-8")
+        self._start  = datetime.now()
+        self._counts: dict[str, int] = {"ok": 0, "error": 0, "warn": 0}
+        self._write_header(title, meta)
+
+    # ------------------------------------------------------------------
+    def _write_header(self, title: str, meta: dict) -> None:
+        started = self._start.strftime("%d.%m.%Y %H:%M:%S")
+        rows = "".join(
+            f'<b>{_html.escape(k)}:</b>{_html.escape(str(v))} '
+            for k, v in meta.items()
+        )
+        self._f.write(f"""<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>Protokoll – {_html.escape(title)}</title>
+  <style>{self._CSS}</style>
+</head>
+<body>
+<h1>📖 {_html.escape(title)}</h1>
+<div class="meta">{rows}<b>Start:</b>{started}</div>
+<table>
+""")
+        self._f.flush()
+
+    # ------------------------------------------------------------------
+    def _elapsed(self) -> str:
+        t   = int((datetime.now() - self._start).total_seconds())
+        h, r = divmod(t, 3600)
+        m, s = divmod(r, 60)
+        return f"{h:02d}:{m:02d}:{s:02d}"
+
+    # ------------------------------------------------------------------
+    def log(self, msg: str, level: str = "info") -> None:
+        """Write one log line (level: info | ok | warn | error | dim | sep)."""
+        ts  = self._elapsed()
+        if level == "sep":
+            self._f.write(f'<tr><td colspan="2" class="sep"><hr></td></tr>\n')
+            print()
+            self._f.flush()
+            return
+
+        if level in self._counts:
+            self._counts[level] += 1
+
+        safe = _html.escape(msg)
+        self._f.write(f'<tr><td class="ts">{ts}</td><td class="{level}">{safe}</td></tr>\n')
+        self._f.flush()
+        print(msg)
+
+    # ------------------------------------------------------------------
+    def close(self, total_chunks: int, produced: int) -> None:
+        end      = datetime.now()
+        duration = str(end - self._start).split(".")[0]
+        ok   = self._counts["ok"]
+        err  = self._counts["error"]
+        warn = self._counts["warn"]
+        self._f.write(f"""</table>
+<div class="footer">
+  Splits gesamt: {total_chunks} &nbsp;|&nbsp;
+  <span class="s-ok">✓ {ok} erfolgreich</span> &nbsp;|&nbsp;
+  <span class="s-warn">⚠ {warn} Warnungen</span> &nbsp;|&nbsp;
+  <span class="s-err">✗ {err} Fehler</span> &nbsp;|&nbsp;
+  Dauer: {duration} &nbsp;|&nbsp;
+  Abgeschlossen: {end.strftime('%d.%m.%Y %H:%M:%S')}
+</div>
+</body></html>
+""")
+        self._f.close()
+        print(f"\n📋  Protokoll gespeichert: {self._path}")
 
 
 # ---------------------------------------------------------------------------
@@ -550,13 +659,22 @@ class EpubConverter:
         ))
 
     # ------------------------------------------------------------------
-    async def _synthesise_chunk(self, segments: list[dict], out_path: Path) -> None:
+    async def _synthesise_chunk(
+        self, segments: list[dict], out_path: Path,
+        log: "HtmlLog | None" = None,
+    ) -> None:
         """
         Synthesise a segment chunk to MP3.
         Primary:  punctuation-based prosodic pauses (Option 1).
         Fallback: spoken placeholder sentences (Option 3) if synthesis fails.
         Raises TtsServerError for network/server failures so the caller can abort early.
         """
+        def _warn(msg: str) -> None:
+            if log:
+                log.log(msg, "warn")
+            else:
+                print(msg)
+
         ssml_text = segments_to_tts_text(segments)
         try:
             communicate = edge_tts.Communicate(ssml_text, self.voice, rate=self.rate, volume=self.volume)
@@ -569,12 +687,7 @@ class EpubConverter:
                 raise TtsServerError(str(exc)) from exc
 
             # --- Option 3 fallback (non-network errors only) ---
-            print(
-                f"\n  ⚠  SSML fehlgeschlagen ({exc}).\n"
-                f"     Hinweis: Wechsle zu Option 3 (Platzhalter-Sätze) …",
-                end="",
-                flush=True,
-            )
+            _warn(f"  ⚠  Synthesis fehlgeschlagen ({exc}) – wechsle zu Option 3 …")
             fallback = segments_to_fallback_text(segments)
             try:
                 communicate = edge_tts.Communicate(fallback, self.voice, rate=self.rate, volume=self.volume)
@@ -619,10 +732,22 @@ class EpubConverter:
                 jobs.append((ch_idx, sp_idx, seg_chunk))
 
         total = len(jobs)
-        print(f"📖  Buch:      {book_title}")
-        print(f"🔊  Stimme:    {self.voice}  |  Rate: {self.rate}")
-        print(f"📂  Ausgabe:   {self.output_dir}")
-        print(f"📑  Kapitel:   {len(chapters)}  |  Splits: {total}\n")
+
+        # --- Open HTML log ---
+        log_path = self.output_dir / f"{safe_book}_protokoll.html"
+        log = HtmlLog(log_path, book_title, {
+            "Stimme":  self.voice,
+            "Rate":    self.rate,
+            "Lautst.": self.volume,
+            "Ausgabe": str(self.output_dir),
+            "Splits":  str(total),
+        })
+
+        log.log(f"📖  Buch:      {book_title}", "info")
+        log.log(f"🔊  Stimme:    {self.voice}  |  Rate: {self.rate}  |  Vol: {self.volume}", "info")
+        log.log(f"📂  Ausgabe:   {self.output_dir}", "dim")
+        log.log(f"📑  Kapitel:   {len(chapters)}  |  Splits: {total}", "info")
+        log.log("", "sep")
 
         produced: list[Path] = []
         consecutive_errors = 0
@@ -631,41 +756,53 @@ class EpubConverter:
         for counter, (ch_idx, sp_idx, seg_chunk) in enumerate(jobs, start=1):
             filename = self.output_dir / f"{ch_idx:03d}_{sp_idx:03d}_{safe_book}.mp3"
             chars    = sum(len(s["text"]) for s in seg_chunk)
+            prefix   = f"  [{counter:>3}/{total}]  {ch_idx:03d}_{sp_idx:03d}  ({chars:,} Zeichen)"
 
-            print(f"  [{counter:>3}/{total}]  {ch_idx:03d}_{sp_idx:03d}  ({chars:,} Zeichen) … ", end="", flush=True)
+            print(f"{prefix} … ", end="", flush=True)
 
             try:
-                await self._synthesise_chunk(seg_chunk, filename)
+                await self._synthesise_chunk(seg_chunk, filename, log=log)
                 produced.append(filename)
                 consecutive_errors = 0
-                print("✓")
+                log.log(f"{prefix} ✓", "ok")
             except TtsServerError as exc:
                 consecutive_errors += 1
-                print(f"✗  SERVER NICHT ERREICHBAR: {exc}", flush=True)
+                msg = f"{prefix} ✗  SERVER NICHT ERREICHBAR: {exc}"
+                log.log(msg, "error")
                 if consecutive_errors >= MAX_CONSECUTIVE:
-                    print(
-                        f"\n❌  TTS-Server antwortet nicht (speech.platform.bing.com).\n"
-                        f"    Mögliche Ursachen:\n"
-                        f"      • Microsoft-Dienst temporär nicht verfügbar\n"
-                        f"      • Keine Internetverbindung\n"
-                        f"      • Firewall blockiert den Zugriff\n"
-                        f"    Konvertierung abgebrochen. Bitte später erneut versuchen.",
-                        file=sys.stderr,
+                    abort = (
+                        "❌  TTS-Server antwortet nicht (speech.platform.bing.com).\n"
+                        "    Mögliche Ursachen:\n"
+                        "      • Microsoft-Dienst temporär nicht verfügbar\n"
+                        "      • Keine Internetverbindung\n"
+                        "      • Firewall blockiert den Zugriff\n"
+                        "    Konvertierung abgebrochen. Bitte später erneut versuchen."
                     )
+                    log.log(abort, "error")
+                    log.close(total, len(produced))
+                    print(abort, file=sys.stderr)
                     sys.exit(2)
             except Exception as exc:
                 consecutive_errors = 0
-                print(f"✗  FEHLER: {exc}")
+                log.log(f"{prefix} ✗  FEHLER: {exc}", "error")
+
+        log.log("", "sep")
 
         if self.merge and produced:
             merged = self.output_dir / f"{safe_book}.mp3"
-            print(f"\n🔗  Zusammenführen von {len(produced)} Datei(en) → {merged.name} … ", end="", flush=True)
+            msg = f"🔗  Zusammenführen von {len(produced)} Datei(en) → {merged.name} … "
+            log.log(msg, "info")
+            print(msg, end="", flush=True)
             with open(merged, "wb") as fout:
                 for part in produced:
                     fout.write(part.read_bytes())
                     part.unlink()
+            log.log("✓ Zusammengeführt.", "ok")
             print("✓")
 
+        done_msg = f"✅  Fertig! {len(produced)}/{total} Splits. Ausgabe: {self.output_dir}"
+        log.log(done_msg, "ok")
+        log.close(total, len(produced))
         print(f"\n✅  Fertig! Dateien gespeichert in: {self.output_dir}")
 
 
