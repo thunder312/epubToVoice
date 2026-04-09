@@ -11,7 +11,8 @@
       "Bash(npm start:*)",
       "Bash(echo \"PID: $!\")",
       "Bash(pip install:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(gh repo:*)"
     ]
   }
 }
