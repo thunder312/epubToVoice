@@ -38,6 +38,7 @@ const voiceInput    = $('voiceInput');
 const voiceDatalist = $('voiceDatalist');
 const demoStatus    = $('demoStatus');
 const langSuggest   = $('langSuggest');
+const voiceCount    = $('voiceCount');
 
 const rateSlider   = $('rateSlider');
 const rateDisplay  = $('rateDisplay');
@@ -97,6 +98,12 @@ async function loadVoices() {
     voiceDatalist.appendChild(opt);
   }
   voiceInput.value = settings.voice;
+
+  // Show voice count and wire up select-all on focus for searchable dropdown
+  voiceCount.textContent = `${result.voices.length} Stimmen verfügbar – tippen zum Filtern`;
+  voiceCount.style.display = '';
+  voiceInput.addEventListener('focus', () => voiceInput.select());
+  voiceInput.addEventListener('click', () => voiceInput.select());
 }
 
 // ---------------------------------------------------------------------------

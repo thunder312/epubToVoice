@@ -476,3 +476,10 @@ details[open] .log-summary::before { content: '▾ '; }
   line-height: 1;
 }
 .lang-dismiss:hover { color: var(--text-muted); }
+
+/* ── Voice count hint ─────────────────────────────────────────────────── */
+.voice-count {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}

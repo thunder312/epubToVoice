@@ -68,10 +68,12 @@
           <label class="field-label">Stimme</label>
           <div id="voiceStatus" class="voice-loading">Stimmen werden geladen…</div>
           <div class="voice-row" style="display:none" id="voiceRow">
-            <input list="voiceDatalist" id="voiceInput" class="input" placeholder="Stimme suchen…">
+            <input list="voiceDatalist" id="voiceInput" class="input" placeholder="Stimme suchen…"
+                   autocomplete="off">
             <button class="btn btn--icon" id="btnDemoVoice" title="Stimme anhören">▶</button>
           </div>
           <datalist id="voiceDatalist"></datalist>
+          <div id="voiceCount" class="voice-count" style="display:none"></div>
           <div id="demoStatus" class="demo-status"></div>
           <div id="langSuggest" class="lang-suggest" style="display:none"></div>
 
