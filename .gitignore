@@ -1,4 +1,33 @@
+# Build output
+dist/
+out/
+build/
+
+# Node
 node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Electron builder cache
+.electron-builder-cache/
+
+# Test / scratch files
 bayrischTest/
 bayrischTest.txt
 memory/
+
+# Local Claude config
+.claude/settings.local.json
