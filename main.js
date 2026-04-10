@@ -221,10 +221,14 @@ ipcMain.handle('load-voices', async () => {
     proc.stderr.on('data', d => (err += d));
     proc.on('close', code => {
       if (code !== 0) {
-        // Friendly hint when edge-tts is missing
-        const msg = err.includes('No module named')
-          ? `Abhängigkeiten fehlen. Bitte ausführen:\n  pip install -r requirements.txt`
-          : (err || 'Stimmen konnten nicht geladen werden');
+        let msg;
+        if (err.includes('No module named')) {
+          msg = `Abhängigkeiten fehlen. Bitte ausführen:\n  pip install -r requirements.txt`;
+        } else if (err.includes('getaddrinfo') || err.includes('ClientConnectorDNSError') || err.includes('Cannot connect to host')) {
+          msg = `Edge TTS: Kein Internetzugang oder speech.platform.bing.com nicht erreichbar.\nStimmen können offline nicht geladen werden.\n→ Piper TTS (offline) als Alternative wählen.`;
+        } else {
+          msg = err.trim() || 'Stimmen konnten nicht geladen werden';
+        }
         resolve({ error: msg });
         return;
       }

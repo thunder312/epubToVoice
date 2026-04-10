@@ -77,16 +77,33 @@ async function checkPython() {
 }
 
 async function loadVoices() {
+  // Reset state
+  voiceStatus.style.display = '';
+  voiceStatus.style.color   = '';
+  voiceStatus.style.whiteSpace = '';
+  voiceStatus.textContent   = 'Stimmen werden geladen…';
+  voiceRow.style.display    = 'none';
+  voiceCount.style.display  = 'none';
+
   const result = await window.api.loadVoices();
-  voiceStatus.style.display = 'none';
-  voiceInput.style.display  = '';
 
   if (result.error) {
-    voiceStatus.style.display    = '';
-    voiceRow.style.display       = 'none';
-    voiceStatus.style.color      = 'var(--error)';
+    const isOffline = result.error.includes('Internetzugang') || result.error.includes('getaddrinfo');
+    voiceStatus.style.color      = isOffline ? 'var(--warn, #e6a817)' : 'var(--error)';
     voiceStatus.style.whiteSpace = 'pre-line';
-    voiceStatus.textContent      = result.error;
+    // Add retry link at the end
+    voiceStatus.textContent = result.error;
+    const retryBtn = document.createElement('button');
+    retryBtn.textContent = '↺ Erneut versuchen';
+    retryBtn.className   = 'btn btn--ghost btn--sm';
+    retryBtn.style.marginTop = '6px';
+    retryBtn.style.display   = 'block';
+    retryBtn.addEventListener('click', () => {
+      voiceDatalist.innerHTML = '';
+      allVoices = [];
+      loadVoices();
+    });
+    voiceStatus.appendChild(retryBtn);
     return;
   }
 
@@ -94,6 +111,7 @@ async function loadVoices() {
   voiceRow.style.display    = '';
 
   allVoices = result.voices;
+  voiceDatalist.innerHTML = '';
   for (const v of result.voices) {
     const opt = document.createElement('option');
     opt.value = v.name;
@@ -102,8 +120,7 @@ async function loadVoices() {
   }
   voiceInput.value = settings.voice;
 
-  // Show voice count and wire up select-all on focus for searchable dropdown
-  voiceCount.textContent = `${result.voices.length} Stimmen verfügbar – tippen zum Filtern`;
+  voiceCount.textContent   = `${result.voices.length} Stimmen verfügbar – tippen zum Filtern`;
   voiceCount.style.display = '';
   voiceInput.addEventListener('focus', () => voiceInput.select());
   voiceInput.addEventListener('click', () => voiceInput.select());
