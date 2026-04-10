@@ -667,38 +667,61 @@ class EpubConverter:
         Synthesise a segment chunk to MP3.
         Primary:  punctuation-based prosodic pauses (Option 1).
         Fallback: spoken placeholder sentences (Option 3) if synthesis fails.
-        Raises TtsServerError for network/server failures so the caller can abort early.
+        Retries up to 3 times on network/server errors with exponential backoff (2 s, 4 s).
+        Raises TtsServerError only after all retries are exhausted.
         """
+        MAX_RETRIES = 3
+        BASE_DELAY  = 2.0   # seconds; doubles each attempt
+
         def _warn(msg: str) -> None:
             if log:
                 log.log(msg, "warn")
             else:
                 print(msg)
 
-        ssml_text = segments_to_tts_text(segments)
-        try:
-            communicate = edge_tts.Communicate(ssml_text, self.voice, rate=self.rate, volume=self.volume)
-            await communicate.save(str(out_path))
-            if out_path.exists() and out_path.stat().st_size < 1024:
-                out_path.unlink()
-                raise RuntimeError("Edge-TTS lieferte eine leere/korrupte Datei.")
-        except Exception as exc:
-            if self._is_network_error(exc):
-                raise TtsServerError(str(exc)) from exc
+        for attempt in range(1, MAX_RETRIES + 1):
+            last_network_exc: Exception | None = None
 
-            # --- Option 3 fallback (non-network errors only) ---
-            _warn(f"  ⚠  Synthesis fehlgeschlagen ({exc}) – wechsle zu Option 3 …")
-            fallback = segments_to_fallback_text(segments)
+            # --- Primary: Option 1 ---
+            ssml_text = segments_to_tts_text(segments)
             try:
-                communicate = edge_tts.Communicate(fallback, self.voice, rate=self.rate, volume=self.volume)
+                communicate = edge_tts.Communicate(ssml_text, self.voice, rate=self.rate, volume=self.volume)
                 await communicate.save(str(out_path))
                 if out_path.exists() and out_path.stat().st_size < 1024:
                     out_path.unlink()
-                    raise RuntimeError("Leere Datei.")
-            except Exception as exc2:
-                if self._is_network_error(exc2):
-                    raise TtsServerError(str(exc2)) from exc2
-                raise RuntimeError(f"Edge-TTS: Auch Fallback-Text (Option 3) fehlgeschlagen: {exc2}") from exc2
+                    raise RuntimeError("Edge-TTS lieferte eine leere/korrupte Datei.")
+                return  # success
+            except Exception as exc:
+                if self._is_network_error(exc):
+                    last_network_exc = exc
+                else:
+                    # Non-network error → try Option 3 fallback
+                    _warn(f"  ⚠  Synthesis fehlgeschlagen ({exc}) – wechsle zu Option 3 …")
+                    fallback = segments_to_fallback_text(segments)
+                    try:
+                        communicate = edge_tts.Communicate(fallback, self.voice, rate=self.rate, volume=self.volume)
+                        await communicate.save(str(out_path))
+                        if out_path.exists() and out_path.stat().st_size < 1024:
+                            out_path.unlink()
+                            raise RuntimeError("Leere Datei.")
+                        return  # success with fallback
+                    except Exception as exc2:
+                        if self._is_network_error(exc2):
+                            last_network_exc = exc2
+                        else:
+                            raise RuntimeError(
+                                f"Edge-TTS: Auch Fallback-Text (Option 3) fehlgeschlagen: {exc2}"
+                            ) from exc2
+
+            # Network error reached – retry with backoff or give up
+            if attempt < MAX_RETRIES:
+                delay = BASE_DELAY * (2 ** (attempt - 1))   # 2 s, 4 s
+                msg = f"  ↻  Server nicht erreichbar – Versuch {attempt}/{MAX_RETRIES}, warte {delay:.0f} s …"
+                _warn(msg)
+                print(msg, flush=True)
+                await asyncio.sleep(delay)
+            else:
+                raise TtsServerError(str(last_network_exc)) from last_network_exc
 
     # ------------------------------------------------------------------
     async def convert(self) -> None:
@@ -773,6 +796,7 @@ class EpubConverter:
                 produced.append(filename)
                 consecutive_errors = 0
                 log.log(f"{prefix} ✓", "ok")
+                await asyncio.sleep(0.5)   # kurze Pause → verhindert Rate-Limiting
             except TtsServerError as exc:
                 consecutive_errors += 1
                 msg = f"{prefix} ✗  SERVER NICHT ERREICHBAR: {exc}"
