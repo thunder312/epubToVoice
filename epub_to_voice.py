@@ -1017,7 +1017,9 @@ class EpubConverter:
             "Splits":  str(total),
         })
 
+        file_type = self.epub_path.suffix.lstrip(".").upper()
         log.log(f"📖  Buch:      {book_title}", "info")
+        log.log(f"📄  Eingabe:   {self.epub_path.name}  [{file_type}]", "dim")
         if self.tts_engine == "piper":
             log.log(f"🔊  Engine:    Piper TTS (offline)  |  Stimme: {self.piper_voice}  |  Rate: {self.rate}", "info")
         else:
@@ -1122,6 +1124,9 @@ class EpubConverter:
 
         done_msg = f"✅  Fertig! {len(produced)}/{total} Splits. Ausgabe: {self.output_dir}"
         log.log(done_msg, "ok")
+        end_time = datetime.now()
+        duration = str(end_time - log._start).split(".")[0]
+        log.log(f"🕒  Ende:      {end_time.strftime('%d.%m.%Y %H:%M:%S')}  |  Laufzeit: {duration}", "dim")
         log.close(total, len(produced))
         print(f"\n✅  Fertig! Dateien gespeichert in: {self.output_dir}")
 
