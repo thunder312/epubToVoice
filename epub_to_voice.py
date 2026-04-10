@@ -715,6 +715,14 @@ class EpubConverter:
                     "     Installieren mit: pip install deep_translator",
                     file=sys.stderr,
                 )
+            else:
+                try:
+                    pdf_path = save_translated_pdf(
+                        chapters, self.output_dir, book_title, self.epub_path.stem
+                    )
+                    print(f"📄  Übersetzung als PDF gespeichert: {pdf_path.name}")
+                except Exception as exc:
+                    print(f"  ⚠  PDF-Export fehlgeschlagen: {exc}", file=sys.stderr)
 
         if self.max_chapters:
             chapters = chapters[:self.max_chapters]
@@ -927,6 +935,61 @@ def _structure_txt(path: Path) -> None:
         "title":    title,
         "sections": sections,
     }), flush=True)
+
+
+# ---------------------------------------------------------------------------
+# PDF export of translated text
+# ---------------------------------------------------------------------------
+
+def save_translated_pdf(
+    chapters: list[dict],
+    output_dir: Path,
+    book_title: str,
+    file_stem: str,
+) -> Path:
+    """Render translated chapters as a PDF and save it in output_dir."""
+    import fitz
+
+    safe_stem = re.sub(r'[\\/:*?"<>|]', "_", file_stem)[:80]
+    pdf_path  = output_dir / f"{safe_stem}_uebersetzt.pdf"
+
+    # Build minimal HTML representing the translated content
+    html_parts = [
+        "<!DOCTYPE html><html><body>",
+        f"<h1>{_html.escape(book_title)}</h1>",
+    ]
+    for chapter in chapters:
+        title = chapter.get("title", "")
+        if title:
+            html_parts.append(f"<h2>{_html.escape(title)}</h2>")
+        for seg in chapter.get("segments", []):
+            text = seg.get("text", "")
+            if not text:
+                continue
+            if seg.get("type") == SEG_HEADING:
+                html_parts.append(f"<h3>{_html.escape(text)}</h3>")
+            else:
+                html_parts.append(f"<p>{_html.escape(text)}</p>")
+    html_parts.append("</body></html>")
+    html = "\n".join(html_parts)
+
+    # Use PyMuPDF Story for automatic text flow across pages
+    mediabox = fitz.paper_rect("a4")
+    margin   = 50
+    where    = mediabox + (margin, margin, -margin, -margin)
+
+    story  = fitz.Story(html=html)
+    writer = fitz.DocumentWriter(str(pdf_path))
+
+    more = True
+    while more:
+        device = writer.begin_page(mediabox)
+        more, _ = story.place(where)
+        story.draw(device)
+        writer.end_page()
+
+    writer.close()
+    return pdf_path
 
 
 # ---------------------------------------------------------------------------
