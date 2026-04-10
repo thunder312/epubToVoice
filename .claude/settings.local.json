@@ -12,7 +12,10 @@
       "Bash(echo \"PID: $!\")",
       "Bash(pip install:*)",
       "Bash(python:*)",
-      "Bash(gh repo:*)"
+      "Bash(gh repo:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)",
+      "Bash(git push:*)"
     ]
   }
 }
