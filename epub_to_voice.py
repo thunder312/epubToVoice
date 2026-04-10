@@ -653,9 +653,10 @@ class EpubConverter:
     def _load_docx(self) -> tuple[list[dict], str]:
         """
         Read a .docx (or .doc) file and return (chapters, clean title).
-        Chapters are split at Word Heading-1 / Überschrift-1 style paragraphs.
-        For .doc files a conversion to .docx is attempted via pywin32 (Word COM)
-        or LibreOffice before parsing; a helpful error is raised if neither is available.
+        Iterates all paragraphs in document order including table cells.
+        Chapters are split at heading-style paragraphs; falls back to
+        one chapter if no headings are found.
+        For .doc files a conversion is attempted via pywin32 or LibreOffice.
         """
         from docx import Document  # python-docx
 
@@ -675,44 +676,54 @@ class EpubConverter:
         raw   = (doc.core_properties.title or "").strip()
         title = self._clean_title(raw) or self.epub_path.stem
 
-        # Styles whose name (lower-cased) signals a chapter break
         CHAPTER_STYLES = {"heading 1", "überschrift 1", "titre 1", "título 1"}
 
-        chapters: list[dict] = []
-        cur_title = title
-        cur_segs:  list[dict] = []
-
-        def _flush() -> None:
-            plain = segments_to_plain_text(cur_segs)
-            if not cur_segs or len(plain) < self.skip_short:
-                return
-            if is_toc_title(cur_title) or is_toc_content(plain):
-                print(f"  ⏭  Inhaltsverzeichnis übersprungen: {cur_title!r}")
-                return
-            chapters.append({"title": cur_title, "segments": list(cur_segs)})
-
-        for para in doc.paragraphs:
+        # Build flat segment list – walk body + table cells in document order
+        segments_raw: list[dict] = []
+        for para in _docx_iter_paragraphs(doc):
             text = sanitize_text(para.text)
             if not text:
                 continue
             style  = para.style.name if para.style else ""
-            is_h1  = style.lower() in CHAPTER_STYLES
             is_hdg = "heading" in style.lower() or "überschrift" in style.lower()
+            seg_type = SEG_HEADING if is_hdg else SEG_PARAGRAPH
+            segments_raw.append({"type": seg_type, "text": text})
 
-            if is_h1:
-                _flush()
-                cur_title = text[:80]
-                cur_segs  = [{"type": SEG_HEADING, "text": text}]
-            elif is_hdg:
-                cur_segs.append({"type": SEG_HEADING, "text": text})
+        if not segments_raw:
+            return [], title
+
+        # Group flat segments into logical chapters (split at heading boundaries)
+        chapters: list[dict] = []
+        current:  list[dict] = []
+
+        def _flush(segs: list[dict]) -> None:
+            if not segs:
+                return
+            plain = segments_to_plain_text(segs)
+            if len(plain) < self.skip_short:
+                return
+            ch_title = (
+                segs[0]["text"][:80] if segs[0]["type"] == SEG_HEADING
+                else f"Abschnitt {len(chapters) + 1}"
+            )
+            if is_toc_title(ch_title) or is_toc_content(plain):
+                print(f"  ⏭  Inhaltsverzeichnis übersprungen: {ch_title!r}")
+                return
+            chapters.append({"title": ch_title, "segments": segs})
+
+        for seg in segments_raw:
+            if seg["type"] == SEG_HEADING and current:
+                _flush(current)
+                current = [seg]
             else:
-                cur_segs.append({"type": SEG_PARAGRAPH, "text": text})
+                current.append(seg)
+        _flush(current)
 
-        _flush()
-
-        # No headings at all → one chapter, all paragraphs
-        if not chapters and cur_segs:
-            chapters.append({"title": title, "segments": cur_segs})
+        # Fallback: no headings at all → one chapter with everything
+        if not chapters:
+            plain = segments_to_plain_text(segments_raw)
+            if len(plain) >= self.skip_short:
+                chapters.append({"title": title, "segments": segments_raw})
 
         return chapters, title
 
@@ -1101,6 +1112,31 @@ def _structure_docx(path: Path) -> None:
         "title":    title,
         "sections": sections,
     }), flush=True)
+
+
+# ---------------------------------------------------------------------------
+# DOCX helpers
+# ---------------------------------------------------------------------------
+
+def _docx_iter_paragraphs(doc: "object"):
+    """
+    Yield every paragraph in a python-docx Document in document order,
+    including paragraphs inside table cells (which doc.paragraphs omits).
+    """
+    from docx.oxml.ns import qn
+
+    def _walk(element):
+        for child in element.iterchildren():
+            tag = child.tag
+            if tag == qn("w:p"):
+                from docx.text.paragraph import Paragraph
+                yield Paragraph(child, doc)
+            elif tag == qn("w:tbl"):
+                for row in child.iterchildren(qn("w:tr")):
+                    for cell in row.iterchildren(qn("w:tc")):
+                        yield from _walk(cell)
+
+    yield from _walk(doc.element.body)
 
 
 # ---------------------------------------------------------------------------
