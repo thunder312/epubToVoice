@@ -19,6 +19,8 @@ const settings = {
   volume:      '+0%',
   skipShort:   60,
   translateTo: null,   // e.g. 'de' when translation is enabled
+  ttsEngine:   'edge', // 'edge' or 'piper'
+  piperVoice:  'de_DE-thorsten-high',
 };
 
 // ---------------------------------------------------------------------------
@@ -407,6 +409,24 @@ function bindEvents() {
     suggestVoiceForLang(settings.translateTo);
   });
 
+  // TTS engine toggle
+  document.querySelectorAll('input[name="ttsEngine"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      settings.ttsEngine = radio.value;
+      const isPiper = radio.value === 'piper';
+      $('edgeVoicePanel').style.display  = isPiper ? 'none' : '';
+      $('piperVoicePanel').style.display = isPiper ? '' : 'none';
+    });
+  });
+  $('piperVoiceInput').addEventListener('input', () => {
+    settings.piperVoice = $('piperVoiceInput').value.trim();
+  });
+  $('piperVoicesLink').addEventListener('click', e => {
+    e.preventDefault();
+    // Open in external browser via shell
+    window.api.revealPath('https://huggingface.co/rhasspy/piper-voices/tree/main');
+  });
+
   btnStart.addEventListener('click',   () => startConversion(false));
   btnPreview.addEventListener('click', () => startConversion(true));
   btnCancel.addEventListener('click',  cancelConversion);
@@ -687,7 +707,7 @@ async function startConversion(previewMode = false) {
 
     currentJobId = job.id;
     job.status   = 'processing';
-    job.subText  = 'Verbinde mit Edge TTS…';
+    job.subText  = settings.ttsEngine === 'piper' ? 'Piper TTS läuft…' : 'Verbinde mit Edge TTS…';
     renderQueue();
     updateJobEl(job);
 
@@ -707,6 +727,8 @@ async function startConversion(previewMode = false) {
       skipChapters: job.skipChapters ?? [],
       translateTo:  settings.translateTo || null,
       resume:       job.resume || false,
+      ttsEngine:    settings.ttsEngine,
+      piperVoice:   settings.piperVoice,
     };
 
     const result = await window.api.startConversion(opts);

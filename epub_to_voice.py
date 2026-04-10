@@ -90,6 +90,25 @@ def segments_to_plain_text(segments: list[dict]) -> str:
     return " ".join(seg["text"] for seg in segments)
 
 
+def _rate_to_piper_length_scale(rate: str) -> float:
+    """Convert an Edge-TTS rate string like '+20%' or '-10%' to a Piper length_scale.
+
+    Piper length_scale: 1.0 = normal, >1.0 = slower, <1.0 = faster.
+    Edge rate: +N% = faster, -N% = slower → inverse mapping.
+    """
+    rate = rate.strip()
+    if not rate or rate == "+0%":
+        return 1.0
+    try:
+        sign = 1 if rate.startswith("+") else -1
+        pct  = float(rate.lstrip("+-").rstrip("%"))
+        # +20% faster in Edge → factor 1/1.20 in Piper
+        factor = 1.0 + sign * pct / 100.0
+        return round(1.0 / max(factor, 0.1), 3)
+    except ValueError:
+        return 1.0
+
+
 def segments_to_tts_text(segments: list[dict]) -> str:
     """
     Build TTS-ready text with punctuation-based prosodic pauses (Option 1).
@@ -353,7 +372,9 @@ class EpubConverter:
         end_page: int | None = None,        # PDF: last page to include (1-based, inclusive)
         skip_chapters: set[int] | None = None,  # EPUB/TXT: doc-order indices to skip
         translate_to: str | None = None,        # BCP-47 language code to translate into (e.g. "de")
-        resume: bool = False,                   # skip splits whose MP3 already exists
+        resume: bool = False,                   # skip splits whose output file already exists
+        tts_engine: str = "edge",               # "edge" or "piper"
+        piper_voice: str = "de_DE-thorsten-high",
     ):
         self.epub_path    = Path(epub_path)
         self.output_dir   = (
@@ -371,6 +392,13 @@ class EpubConverter:
         self.skip_chapters = skip_chapters or set()
         self.translate_to  = translate_to or None
         self.resume        = resume
+        self.tts_engine    = tts_engine
+        self.piper_voice   = piper_voice
+        self._piper_instance = None   # lazy-loaded
+
+    @property
+    def _audio_ext(self) -> str:
+        return ".wav" if self.tts_engine == "piper" else ".mp3"
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -741,12 +769,105 @@ class EpubConverter:
         ))
 
     # ------------------------------------------------------------------
+    @staticmethod
+    def _piper_model_dir() -> Path:
+        """Return (and create) the directory where Piper models are stored."""
+        import os
+        if sys.platform == "win32":
+            base = Path(os.environ.get("APPDATA", Path.home()))
+        else:
+            base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+        d = base / "epub-to-voice" / "piper-models"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    @staticmethod
+    def _ensure_piper_model(voice_name: str) -> tuple[Path, Path]:
+        """
+        Return (onnx_path, json_path) for a Piper voice.
+        Downloads both files from HuggingFace if they are missing.
+        """
+        import urllib.request
+        mdir      = EpubConverter._piper_model_dir()
+        onnx_path = mdir / f"{voice_name}.onnx"
+        json_path = mdir / f"{voice_name}.onnx.json"
+
+        if not onnx_path.exists() or not json_path.exists():
+            # Parse voice name:  de_DE-thorsten-high  →  de / de_DE / thorsten / high
+            parts       = voice_name.split("-")
+            lang_region = parts[0]                       # de_DE
+            lang        = lang_region.split("_")[0].lower()  # de
+            quality     = parts[-1]                      # high
+            name        = "-".join(parts[1:-1])          # thorsten
+
+            base_url = (
+                f"https://huggingface.co/rhasspy/piper-voices"
+                f"/resolve/v1.0.0/{lang}/{lang_region}/{name}/{quality}"
+            )
+            for fname, fpath in [
+                (f"{voice_name}.onnx",      onnx_path),
+                (f"{voice_name}.onnx.json", json_path),
+            ]:
+                if not fpath.exists():
+                    url = f"{base_url}/{fname}"
+                    print(f"  ⬇  Lade Piper-Modell: {fname} …", flush=True)
+                    urllib.request.urlretrieve(url, str(fpath))
+                    print(f"     ✓ {fname}")
+
+        return onnx_path, json_path
+
+    def _get_piper_voice(self):
+        """Lazy-load and cache the PiperVoice instance."""
+        if self._piper_instance is None:
+            from piper.voice import PiperVoice  # type: ignore
+            onnx_path, json_path = EpubConverter._ensure_piper_model(self.piper_voice)
+            print(f"  🔊  Initialisiere Piper: {self.piper_voice} …", flush=True)
+            self._piper_instance = PiperVoice.load(
+                str(onnx_path), config_path=str(json_path), use_cuda=False
+            )
+        return self._piper_instance
+
+    # ------------------------------------------------------------------
+    async def _synthesise_chunk_piper(
+        self, segments: list[dict], out_path: Path,
+        log: "HtmlLog | None" = None,
+    ) -> None:
+        """Synthesise a chunk with Piper TTS (offline) and save as WAV."""
+        import wave as _wave
+
+        text = segments_to_plain_text(segments)
+        if not text.strip():
+            return
+
+        voice        = self._get_piper_voice()
+        length_scale = _rate_to_piper_length_scale(self.rate)
+
+        wav_path = out_path  # caller already uses .wav extension
+        with _wave.open(str(wav_path), "wb") as wf:
+            voice.synthesize(text, wf, length_scale=length_scale)
+
+        if not wav_path.exists() or wav_path.stat().st_size < 512:
+            wav_path.unlink(missing_ok=True)
+            raise RuntimeError("Piper TTS lieferte eine leere Datei.")
+
+    # ------------------------------------------------------------------
     async def _synthesise_chunk(
         self, segments: list[dict], out_path: Path,
         log: "HtmlLog | None" = None,
     ) -> None:
+        """Dispatch to the right TTS engine."""
+        if self.tts_engine == "piper":
+            await self._synthesise_chunk_piper(segments, out_path, log=log)
+        else:
+            await self._synthesise_chunk_edge(segments, out_path, log=log)
+
+    # ------------------------------------------------------------------
+    async def _synthesise_chunk_edge(
+        self, segments: list[dict], out_path: Path,
+        log: "HtmlLog | None" = None,
+    ) -> None:
         """
-        Synthesise a segment chunk to MP3.
+        Synthesise a segment chunk to MP3 via Edge TTS.
         Primary:  punctuation-based prosodic pauses (Option 1).
         Fallback: spoken placeholder sentences (Option 3) if synthesis fails.
         Retries up to 3 times on network/server errors with exponential backoff (2 s, 4 s).
@@ -872,11 +993,11 @@ class EpubConverter:
             log.log("▶  Fortsetzen – bereits vorhandene Splits werden übersprungen.", "info")
 
         for counter, (ch_idx, sp_idx, seg_chunk) in enumerate(jobs, start=1):
-            filename = self.output_dir / f"{ch_idx:03d}_{sp_idx:03d}_{safe_book}.mp3"
+            filename = self.output_dir / f"{ch_idx:03d}_{sp_idx:03d}_{safe_book}{self._audio_ext}"
             chars    = sum(len(s["text"]) for s in seg_chunk)
             prefix   = f"  [{counter:>3}/{total}]  {ch_idx:03d}_{sp_idx:03d}  ({chars:,} Zeichen)"
 
-            # Resume mode: skip splits that already have a valid MP3
+            # Resume mode: skip splits that already have a valid audio file
             if self.resume and filename.exists() and filename.stat().st_size > 1024:
                 produced.append(filename)
                 log.log(f"{prefix} ⏭  übersprungen (vorhanden)", "dim")
@@ -945,14 +1066,26 @@ class EpubConverter:
         log.log("", "sep")
 
         if self.merge and produced:
-            merged = self.output_dir / f"{safe_book}.mp3"
+            merged = self.output_dir / f"{safe_book}{self._audio_ext}"
             msg = f"🔗  Zusammenführen von {len(produced)} Datei(en) → {merged.name} … "
             log.log(msg, "info")
             print(msg, end="", flush=True)
-            with open(merged, "wb") as fout:
-                for part in produced:
-                    fout.write(part.read_bytes())
-                    part.unlink()
+            if self.tts_engine == "piper":
+                # WAV merge: copy header from first file, append raw PCM data
+                import wave as _wave
+                with _wave.open(str(produced[0]), "rb") as first_wf:
+                    params = first_wf.getparams()
+                with _wave.open(str(merged), "wb") as wout:
+                    wout.setparams(params)
+                    for part in produced:
+                        with _wave.open(str(part), "rb") as win:
+                            wout.writeframes(win.readframes(win.getnframes()))
+                        part.unlink()
+            else:
+                with open(merged, "wb") as fout:
+                    for part in produced:
+                        fout.write(part.read_bytes())
+                        part.unlink()
             log.log("✓ Zusammengeführt.", "ok")
             print("✓")
 
@@ -1516,7 +1649,11 @@ Examples:
     parser.add_argument("--translate-to", default="",
                         help='Translate text to this language before TTS, e.g. "de" for German (requires deep_translator)')
     parser.add_argument("--resume", action="store_true",
-                        help='Resume interrupted conversion: skip splits whose MP3 already exists')
+                        help='Resume interrupted conversion: skip splits whose audio file already exists')
+    parser.add_argument("--tts-engine", default="edge", choices=["edge", "piper"],
+                        help='TTS engine: "edge" (online, Microsoft) or "piper" (offline, local)')
+    parser.add_argument("--piper-voice", default="de_DE-thorsten-high",
+                        help='Piper voice name, e.g. "de_DE-thorsten-high" or "en_US-amy-medium"')
     return parser
 
 
@@ -1576,6 +1713,8 @@ def main() -> None:
         skip_chapters = skip_set,
         translate_to  = args.translate_to or None,
         resume        = args.resume,
+        tts_engine    = args.tts_engine,
+        piper_voice   = args.piper_voice,
     )
     asyncio.run(converter.convert())
 

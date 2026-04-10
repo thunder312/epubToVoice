@@ -350,7 +350,7 @@ ipcMain.handle('demo-voice', async (event, { voice, rate, volume }) => {
 
 ipcMain.handle('start-conversion', async (event, opts) => {
   const { jobId, epubPath, outputDir, voice, rate, volume, skipShort, maxChapters, merge, createZip,
-          startPage, endPage, skipChapters, translateTo, resume } = opts;
+          startPage, endPage, skipChapters, translateTo, resume, ttsEngine, piperVoice } = opts;
 
   const cmd = await getPython();
   if (!cmd) return { error: 'Python not found' };
@@ -368,6 +368,8 @@ ipcMain.handle('start-conversion', async (event, opts) => {
   if (skipChapters && skipChapters.length) args.push(`--skip-chapters=${skipChapters.join(',')}`);
   if (translateTo)                         args.push(`--translate-to=${translateTo}`);
   if (resume)                              args.push('--resume');
+  if (ttsEngine && ttsEngine !== 'edge')   args.push(`--tts-engine=${ttsEngine}`);
+  if (piperVoice)                          args.push(`--piper-voice=${piperVoice}`);
 
   return new Promise(resolve => {
     const proc = spawn(cmd, args, { shell: false, env: { ...process.env, PYTHONIOENCODING: 'utf-8' } });
@@ -445,7 +447,11 @@ ipcMain.handle('cancel-job', (event, jobId) => {
 });
 
 ipcMain.handle('reveal-path', (event, p) => {
-  shell.showItemInFolder(p);
+  if (p.startsWith('http://') || p.startsWith('https://')) {
+    shell.openExternal(p);
+  } else {
+    shell.showItemInFolder(p);
+  }
 });
 
 ipcMain.handle('check-resumable', (event, filePath, customOutputDir) => {
@@ -455,9 +461,9 @@ ipcMain.handle('check-resumable', (event, filePath, customOutputDir) => {
     ? path.join(customOutputDir, stem)
     : path.join(parsed.dir, stem);
   try {
-    const files = fs.readdirSync(outDir);
-    const mp3s  = files.filter(f => f.toLowerCase().endsWith('.mp3'));
-    return { resumable: mp3s.length > 0, outputDir: outDir, mp3Count: mp3s.length };
+    const files  = fs.readdirSync(outDir);
+    const audio  = files.filter(f => /\.(mp3|wav)$/i.test(f));
+    return { resumable: audio.length > 0, outputDir: outDir, mp3Count: audio.length };
   } catch {
     return { resumable: false };
   }

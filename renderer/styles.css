@@ -218,6 +218,31 @@ h1           { font-size: 16px; font-weight: 600; letter-spacing: .3px; }
 .toggle-label input[type="checkbox"] { accent-color: var(--primary); width: 15px; height: 15px; }
 .toggle-text { color: var(--text); }
 
+/* TTS Engine toggle */
+.engine-toggle {
+  display: flex;
+  gap: 16px;
+  padding: 6px 0 10px;
+}
+.engine-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.engine-option input[type="radio"] { accent-color: var(--primary); }
+.engine-hint { font-size: 11px; color: var(--text-muted); }
+
+.piper-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 6px;
+  line-height: 1.5;
+}
+.piper-hint a { color: var(--primary); text-decoration: none; }
+.piper-hint a:hover { text-decoration: underline; }
+
 /* Voice loading state */
 .voice-loading { font-size: 12px; color: var(--text-muted); padding: 6px 0; }
 

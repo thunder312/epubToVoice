@@ -79,17 +79,45 @@
         <h2 class="section-title">Stimme &amp; Geschwindigkeit</h2>
 
         <div id="voiceSettings">
-          <label class="field-label">Stimme</label>
-          <div id="voiceStatus" class="voice-loading">Stimmen werden geladen…</div>
-          <div class="voice-row" style="display:none" id="voiceRow">
-            <input list="voiceDatalist" id="voiceInput" class="input" placeholder="Stimme suchen…"
-                   autocomplete="off">
-            <button class="btn btn--icon" id="btnDemoVoice" title="Stimme anhören">▶</button>
+          <!-- TTS Engine selector -->
+          <label class="field-label">TTS-Engine</label>
+          <div class="engine-toggle">
+            <label class="engine-option">
+              <input type="radio" name="ttsEngine" id="engineEdge" value="edge" checked>
+              <span>Edge TTS <span class="engine-hint">(online)</span></span>
+            </label>
+            <label class="engine-option">
+              <input type="radio" name="ttsEngine" id="enginePiper" value="piper">
+              <span>Piper TTS <span class="engine-hint">(offline)</span></span>
+            </label>
           </div>
-          <datalist id="voiceDatalist"></datalist>
-          <div id="voiceCount" class="voice-count" style="display:none"></div>
-          <div id="demoStatus" class="demo-status"></div>
-          <div id="langSuggest" class="lang-suggest" style="display:none"></div>
+
+          <!-- Edge TTS voice picker -->
+          <div id="edgeVoicePanel">
+            <label class="field-label">Stimme</label>
+            <div id="voiceStatus" class="voice-loading">Stimmen werden geladen…</div>
+            <div class="voice-row" style="display:none" id="voiceRow">
+              <input list="voiceDatalist" id="voiceInput" class="input" placeholder="Stimme suchen…"
+                     autocomplete="off">
+              <button class="btn btn--icon" id="btnDemoVoice" title="Stimme anhören">▶</button>
+            </div>
+            <datalist id="voiceDatalist"></datalist>
+            <div id="voiceCount" class="voice-count" style="display:none"></div>
+            <div id="demoStatus" class="demo-status"></div>
+            <div id="langSuggest" class="lang-suggest" style="display:none"></div>
+          </div>
+
+          <!-- Piper TTS voice picker -->
+          <div id="piperVoicePanel" style="display:none">
+            <label class="field-label">Piper-Stimme</label>
+            <input type="text" id="piperVoiceInput" class="input"
+                   value="de_DE-thorsten-high"
+                   placeholder="z. B. de_DE-thorsten-high oder en_US-amy-medium">
+            <div class="piper-hint">
+              Stimmen werden beim ersten Start automatisch heruntergeladen.<br>
+              Verfügbare Stimmen: <a href="#" id="piperVoicesLink">HuggingFace / rhasspy/piper-voices</a>
+            </div>
+          </div>
 
           <label class="field-label">
             Geschwindigkeit&ensp;<span id="rateDisplay" class="value-display">-10%</span>
