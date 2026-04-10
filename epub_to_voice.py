@@ -1120,23 +1120,16 @@ def _structure_docx(path: Path) -> None:
 
 def _docx_iter_paragraphs(doc: "object"):
     """
-    Yield every paragraph in a python-docx Document in document order,
-    including paragraphs inside table cells (which doc.paragraphs omits).
+    Yield every paragraph in a python-docx Document in document order.
+    Uses iter() to recurse into ALL nested elements – this covers normal
+    body paragraphs, table cells, AND WordprocessingShape text boxes
+    (wps:txbx) which doc.paragraphs silently skips.
     """
-    from docx.oxml.ns import qn
+    from docx.text.paragraph import Paragraph
 
-    def _walk(element):
-        for child in element.iterchildren():
-            tag = child.tag
-            if tag == qn("w:p"):
-                from docx.text.paragraph import Paragraph
-                yield Paragraph(child, doc)
-            elif tag == qn("w:tbl"):
-                for row in child.iterchildren(qn("w:tr")):
-                    for cell in row.iterchildren(qn("w:tc")):
-                        yield from _walk(cell)
-
-    yield from _walk(doc.element.body)
+    W_P = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p"
+    for p_el in doc.element.body.iter(W_P):
+        yield Paragraph(p_el, doc)
 
 
 # ---------------------------------------------------------------------------
