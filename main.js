@@ -65,7 +65,7 @@ async function detectPython() {
   return null;
 }
 
-const SUPPORTED_EXT = new Set(['.epub', '.pdf', '.txt']);
+const SUPPORTED_EXT = new Set(['.epub', '.pdf', '.txt', '.docx', '.doc']);
 
 /** Recursively collect all supported input files under dir. */
 function findEpubs(dir) {
@@ -100,10 +100,11 @@ ipcMain.handle('dialog:openFiles', async () => {
     title: 'Select EPUB file(s)',
     properties: ['openFile', 'multiSelections'],
     filters: [
-      { name: 'Unterstützte Formate', extensions: ['epub', 'pdf', 'txt'] },
-      { name: 'EPUB', extensions: ['epub'] },
-      { name: 'PDF',  extensions: ['pdf'] },
-      { name: 'Text', extensions: ['txt'] },
+      { name: 'Unterstützte Formate', extensions: ['epub', 'pdf', 'txt', 'docx', 'doc'] },
+      { name: 'EPUB',                 extensions: ['epub'] },
+      { name: 'PDF',                  extensions: ['pdf'] },
+      { name: 'Text',                 extensions: ['txt'] },
+      { name: 'Word-Dokument',        extensions: ['docx', 'doc'] },
     ],
   });
   return canceled ? [] : filePaths;
