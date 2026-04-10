@@ -390,6 +390,8 @@ class EpubConverter:
             return self._load_pdf()
         if ext == ".txt":
             return self._load_txt()
+        if ext in (".docx", ".doc"):
+            return self._load_docx()
         raise ValueError(f"Unsupported format: {ext}")
 
     # ------------------------------------------------------------------
@@ -648,6 +650,73 @@ class EpubConverter:
         return chapters, raw_title
 
     # ------------------------------------------------------------------
+    def _load_docx(self) -> tuple[list[dict], str]:
+        """
+        Read a .docx (or .doc) file and return (chapters, clean title).
+        Chapters are split at Word Heading-1 / Überschrift-1 style paragraphs.
+        For .doc files a conversion to .docx is attempted via pywin32 (Word COM)
+        or LibreOffice before parsing; a helpful error is raised if neither is available.
+        """
+        from docx import Document  # python-docx
+
+        src = self.epub_path
+        tmp_dir: "Path | None" = None
+
+        if src.suffix.lower() == ".doc":
+            src, tmp_dir = _convert_doc_to_docx(src)
+
+        try:
+            doc = Document(str(src))
+        finally:
+            if tmp_dir is not None:
+                import shutil
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+
+        raw   = (doc.core_properties.title or "").strip()
+        title = self._clean_title(raw) or self.epub_path.stem
+
+        # Styles whose name (lower-cased) signals a chapter break
+        CHAPTER_STYLES = {"heading 1", "überschrift 1", "titre 1", "título 1"}
+
+        chapters: list[dict] = []
+        cur_title = title
+        cur_segs:  list[dict] = []
+
+        def _flush() -> None:
+            plain = segments_to_plain_text(cur_segs)
+            if not cur_segs or len(plain) < self.skip_short:
+                return
+            if is_toc_title(cur_title) or is_toc_content(plain):
+                print(f"  ⏭  Inhaltsverzeichnis übersprungen: {cur_title!r}")
+                return
+            chapters.append({"title": cur_title, "segments": list(cur_segs)})
+
+        for para in doc.paragraphs:
+            text = sanitize_text(para.text)
+            if not text:
+                continue
+            style  = para.style.name if para.style else ""
+            is_h1  = style.lower() in CHAPTER_STYLES
+            is_hdg = "heading" in style.lower() or "überschrift" in style.lower()
+
+            if is_h1:
+                _flush()
+                cur_title = text[:80]
+                cur_segs  = [{"type": SEG_HEADING, "text": text}]
+            elif is_hdg:
+                cur_segs.append({"type": SEG_HEADING, "text": text})
+            else:
+                cur_segs.append({"type": SEG_PARAGRAPH, "text": text})
+
+        _flush()
+
+        # No headings at all → one chapter, all paragraphs
+        if not chapters and cur_segs:
+            chapters.append({"title": title, "segments": cur_segs})
+
+        return chapters, title
+
+    # ------------------------------------------------------------------
     @staticmethod
     def _is_network_error(exc: Exception) -> bool:
         """Return True if the exception looks like a server/network connectivity failure."""
@@ -891,6 +960,8 @@ def get_structure_cmd(file_path: str) -> None:
             _structure_epub(path)
         elif ext == ".txt":
             _structure_txt(path)
+        elif ext in (".docx", ".doc"):
+            _structure_docx(path)
         else:
             print(json.dumps({"error": f"Unsupported: {ext}"}))
     except Exception as exc:
@@ -991,6 +1062,100 @@ def _structure_txt(path: Path) -> None:
         "title":    title,
         "sections": sections,
     }), flush=True)
+
+
+def _structure_docx(path: Path) -> None:
+    from docx import Document  # python-docx
+    doc   = Document(str(path))
+    raw   = (doc.core_properties.title or "").strip()
+    title = EpubConverter._clean_title(raw) or path.stem
+
+    CHAPTER_STYLES = {"heading 1", "überschrift 1", "titre 1", "título 1"}
+    sections = []
+    sec_idx  = 0
+    cur_title = title
+    cur_chars = 0
+    cur_is_toc = False
+
+    for para in doc.paragraphs:
+        text  = sanitize_text(para.text)
+        style = para.style.name.lower() if para.style else ""
+        if style in CHAPTER_STYLES:
+            if cur_chars > 0:
+                sections.append({"index": sec_idx, "title": cur_title,
+                                  "chars": cur_chars, "isToc": cur_is_toc})
+                sec_idx += 1
+            cur_title  = text[:80] or f"Abschnitt {sec_idx + 1}"
+            cur_chars  = len(text)
+            cur_is_toc = is_toc_title(cur_title)
+        else:
+            cur_chars  += len(text)
+            cur_is_toc  = cur_is_toc or is_toc_content(text)
+
+    if cur_chars > 0:
+        sections.append({"index": sec_idx, "title": cur_title,
+                          "chars": cur_chars, "isToc": cur_is_toc})
+
+    print(json.dumps({
+        "type":     "docx",
+        "title":    title,
+        "sections": sections,
+    }), flush=True)
+
+
+# ---------------------------------------------------------------------------
+# DOC → DOCX conversion helper
+# ---------------------------------------------------------------------------
+
+def _convert_doc_to_docx(doc_path: Path) -> "tuple[Path, Path]":
+    """
+    Convert a legacy .doc file to .docx and return (docx_path, tmp_dir).
+    The caller is responsible for deleting tmp_dir after use.
+    Tries pywin32 Word COM first, then LibreOffice headless.
+    Raises RuntimeError if neither is available.
+    """
+    import tempfile
+    tmp_dir = Path(tempfile.mkdtemp())
+    out     = tmp_dir / (doc_path.stem + ".docx")
+
+    # --- pywin32 Word COM (Windows, requires Microsoft Word) ---
+    try:
+        import win32com.client  # type: ignore
+        word = win32com.client.Dispatch("Word.Application")
+        word.Visible = False
+        try:
+            wb = word.Documents.Open(str(doc_path.resolve()))
+            wb.SaveAs2(str(out.resolve()), FileFormat=16)  # 16 = wdFormatXMLDocument
+            wb.Close(False)
+        finally:
+            word.Quit()
+        if out.exists():
+            return out, tmp_dir
+    except ImportError:
+        pass
+    except Exception as exc:
+        print(f"  ⚠  Word COM fehlgeschlagen ({exc}) – versuche LibreOffice …", file=sys.stderr)
+
+    # --- LibreOffice headless ---
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["soffice", "--headless", "--convert-to", "docx",
+             "--outdir", str(tmp_dir), str(doc_path)],
+            capture_output=True, timeout=120,
+        )
+        if result.returncode == 0 and out.exists():
+            return out, tmp_dir
+    except FileNotFoundError:
+        pass
+    except subprocess.TimeoutExpired:
+        print("  ⚠  LibreOffice-Konvertierung abgelaufen.", file=sys.stderr)
+
+    raise RuntimeError(
+        f"Kann '{doc_path.name}' nicht öffnen.\n"
+        "  Bitte die Datei in Word oder LibreOffice als .docx speichern,\n"
+        "  oder pywin32 installieren: pip install pywin32"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1156,6 +1321,23 @@ def _extract_sample(path: Path, max_chars: int = 6000) -> str:
             doc.close()
             return sanitize_text(buf)[:max_chars]
 
+        if ext in (".docx", ".doc"):
+            from docx import Document  # python-docx
+            src     = path
+            tmp_dir = None
+            if ext == ".doc":
+                src, tmp_dir = _convert_doc_to_docx(path)
+            try:
+                doc = Document(str(src))
+                buf = " ".join(
+                    sanitize_text(p.text) for p in doc.paragraphs if p.text.strip()
+                )
+            finally:
+                if tmp_dir is not None:
+                    import shutil
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
+            return buf[:max_chars]
+
     except Exception:
         pass
     return ""
@@ -1267,7 +1449,7 @@ Examples:
   python epub_to_voice.py --list-voices de
         """,
     )
-    parser.add_argument("epub",            nargs="?", help="Path to the .epub, .pdf, or .txt file")
+    parser.add_argument("epub",            nargs="?", help="Path to the .epub, .pdf, .txt, .docx, or .doc file")
     parser.add_argument("-o", "--output",  help="Output directory (default: <stem>/)")
     parser.add_argument("-v", "--voice",   default=DEFAULT_VOICE, help=f"TTS voice (default: {DEFAULT_VOICE})")
     parser.add_argument("-r", "--rate",    default=DEFAULT_RATE,  help='Speech rate, e.g. "+15%%" or "-10%%"')
@@ -1326,13 +1508,13 @@ def main() -> None:
         parser.print_help()
         sys.exit(1)
 
-    SUPPORTED = {".epub", ".pdf", ".txt"}
+    SUPPORTED = {".epub", ".pdf", ".txt", ".docx", ".doc"}
     epub_path = Path(args.epub)
     if not epub_path.exists():
         print(f"Fehler: Datei nicht gefunden: {epub_path}", file=sys.stderr)
         sys.exit(1)
     if epub_path.suffix.lower() not in SUPPORTED:
-        print(f"Fehler: Nicht unterstütztes Format '{epub_path.suffix}'. Unterstützt: {', '.join(SUPPORTED)}", file=sys.stderr)
+        print(f"Fehler: Nicht unterstütztes Format '{epub_path.suffix}'. Unterstützt: {', '.join(sorted(SUPPORTED))}", file=sys.stderr)
         sys.exit(1)
 
     skip_set = {int(x) for x in args.skip_chapters.split(",") if x.strip().isdigit()}
