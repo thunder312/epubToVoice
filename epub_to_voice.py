@@ -398,7 +398,7 @@ class EpubConverter:
 
     @property
     def _audio_ext(self) -> str:
-        return ".wav" if self.tts_engine == "piper" else ".mp3"
+        return ".mp3"  # both Edge and Piper output MP3
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -832,8 +832,8 @@ class EpubConverter:
         self, segments: list[dict], out_path: Path,
         log: "HtmlLog | None" = None,
     ) -> None:
-        """Synthesise a chunk with Piper TTS (offline) and save as WAV."""
-        import wave as _wave
+        """Synthesise a chunk with Piper TTS (offline) and encode to MP3."""
+        import lameenc  # type: ignore
         from piper.config import SynthesisConfig  # type: ignore
 
         text = segments_to_plain_text(segments)
@@ -844,23 +844,27 @@ class EpubConverter:
         length = _rate_to_piper_length_scale(self.rate)
         cfg    = SynthesisConfig(length_scale=length)
 
-        # synthesize() returns an iterable of AudioChunk objects
+        # synthesize() returns an iterable of AudioChunk objects (raw int16 PCM)
         chunks = list(voice.synthesize(text, syn_config=cfg))
         if not chunks:
             raise RuntimeError("Piper TTS lieferte keine Audio-Daten.")
 
-        wav_path = out_path
-        with _wave.open(str(wav_path), "wb") as wf:
-            first = chunks[0]
-            wf.setnchannels(first.sample_channels)
-            wf.setsampwidth(first.sample_width)
-            wf.setframerate(first.sample_rate)
-            for chunk in chunks:
-                wf.writeframes(chunk.audio_int16_bytes)
+        first   = chunks[0]
+        pcm_all = b"".join(ch.audio_int16_bytes for ch in chunks)
 
-        if not wav_path.exists() or wav_path.stat().st_size < 512:
-            wav_path.unlink(missing_ok=True)
-            raise RuntimeError("Piper TTS lieferte eine leere Datei.")
+        # Encode PCM → MP3 via lameenc (no ffmpeg required)
+        enc = lameenc.Encoder()
+        enc.set_bit_rate(128)
+        enc.set_in_sample_rate(first.sample_rate)
+        enc.set_channels(first.sample_channels)
+        enc.set_quality(2)   # 2 = highest quality (LAME preset)
+        mp3_data = enc.encode(pcm_all) + enc.flush()
+
+        out_path.write_bytes(mp3_data)
+
+        if out_path.stat().st_size < 512:
+            out_path.unlink(missing_ok=True)
+            raise RuntimeError("Piper TTS: MP3-Ausgabe ist leer.")
 
     # ------------------------------------------------------------------
     async def _synthesise_chunk(
@@ -941,14 +945,21 @@ class EpubConverter:
     # ------------------------------------------------------------------
     async def convert(self) -> None:
         """Main entry point – convert all chapters to MP3 files."""
-        # Preflight: check piper-tts is installed when Piper engine is selected
+        # Preflight: check piper-tts + lameenc are installed when Piper engine is selected
         if self.tts_engine == "piper":
+            missing = []
             try:
                 from piper.voice import PiperVoice  # noqa: F401
             except ImportError:
+                missing.append("piper-tts")
+            try:
+                import lameenc  # noqa: F401
+            except ImportError:
+                missing.append("lameenc")
+            if missing:
                 print(
-                    "❌  Piper TTS nicht installiert.\n"
-                    "    Bitte ausführen:  pip install piper-tts\n"
+                    f"❌  Fehlende Pakete für Piper TTS: {', '.join(missing)}\n"
+                    "    Bitte ausführen:  pip install piper-tts lameenc\n"
                     "    Oder Edge TTS (online) in der GUI wählen.",
                     file=sys.stderr,
                 )
@@ -1102,22 +1113,10 @@ class EpubConverter:
             msg = f"🔗  Zusammenführen von {len(produced)} Datei(en) → {merged.name} … "
             log.log(msg, "info")
             print(msg, end="", flush=True)
-            if self.tts_engine == "piper":
-                # WAV merge: copy header from first file, append raw PCM data
-                import wave as _wave
-                with _wave.open(str(produced[0]), "rb") as first_wf:
-                    params = first_wf.getparams()
-                with _wave.open(str(merged), "wb") as wout:
-                    wout.setparams(params)
-                    for part in produced:
-                        with _wave.open(str(part), "rb") as win:
-                            wout.writeframes(win.readframes(win.getnframes()))
-                        part.unlink()
-            else:
-                with open(merged, "wb") as fout:
-                    for part in produced:
-                        fout.write(part.read_bytes())
-                        part.unlink()
+            with open(merged, "wb") as fout:
+                for part in produced:
+                    fout.write(part.read_bytes())
+                    part.unlink()
             log.log("✓ Zusammengeführt.", "ok")
             print("✓")
 
