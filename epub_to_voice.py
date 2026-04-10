@@ -1052,30 +1052,47 @@ class EpubConverter:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         chapters, book_title = self._load_chapters()
 
+        safe_book = re.sub(r'[\\/:*?"<>|]', "_", book_title)[:80]
+
         if self.translate_to:
-            try:
-                chapters = translate_chapters(chapters, self.translate_to)
-            except ImportError:
-                print(
-                    "  ⚠  deep_translator nicht installiert – Übersetzung übersprungen.\n"
-                    "     Installieren mit: pip install deep_translator",
-                    file=sys.stderr,
-                )
-            else:
-                try:
-                    pdf_path = save_translated_pdf(
-                        chapters, self.output_dir, book_title, self.epub_path.stem
+            # In resume mode, skip translation if all audio files already exist
+            skip_translation = False
+            if self.resume:
+                check_chapters = chapters[:self.max_chapters] if self.max_chapters else chapters
+                if check_chapters:
+                    skip_translation = all(
+                        (self.output_dir / f"{ch_idx:03d}_{sp_idx:03d}_{safe_book}{self._audio_ext}").exists()
+                        and (self.output_dir / f"{ch_idx:03d}_{sp_idx:03d}_{safe_book}{self._audio_ext}").stat().st_size > 1024
+                        for ch_idx, chapter in enumerate(check_chapters, start=1)
+                        for sp_idx in range(1, len(chunk_segments(chapter["segments"])) + 1)
                     )
-                    print(f"📄  Übersetzung als PDF gespeichert: {pdf_path.name}")
-                except Exception as exc:
-                    print(f"  ⚠  PDF-Export fehlgeschlagen: {exc}", file=sys.stderr)
+                if skip_translation:
+                    print("⏭  Alle Splits vorhanden – Übersetzung und Bereinigung werden übersprungen.")
+
+            if not skip_translation:
                 try:
-                    txt_path = save_translated_txt(
-                        chapters, self.output_dir, book_title, self.epub_path.stem
+                    chapters = translate_chapters(chapters, self.translate_to)
+                except ImportError:
+                    print(
+                        "  ⚠  deep_translator nicht installiert – Übersetzung übersprungen.\n"
+                        "     Installieren mit: pip install deep_translator",
+                        file=sys.stderr,
                     )
-                    txt_path.unlink(missing_ok=True)
-                except Exception as exc:
-                    print(f"  ⚠  TXT-Prüfung fehlgeschlagen: {exc}", file=sys.stderr)
+                else:
+                    try:
+                        pdf_path = save_translated_pdf(
+                            chapters, self.output_dir, book_title, self.epub_path.stem
+                        )
+                        print(f"📄  Übersetzung als PDF gespeichert: {pdf_path.name}")
+                    except Exception as exc:
+                        print(f"  ⚠  PDF-Export fehlgeschlagen: {exc}", file=sys.stderr)
+                    try:
+                        txt_path = save_translated_txt(
+                            chapters, self.output_dir, book_title, self.epub_path.stem
+                        )
+                        txt_path.unlink(missing_ok=True)
+                    except Exception as exc:
+                        print(f"  ⚠  TXT-Prüfung fehlgeschlagen: {exc}", file=sys.stderr)
 
         if self.max_chapters:
             chapters = chapters[:self.max_chapters]
@@ -1083,8 +1100,6 @@ class EpubConverter:
         if not chapters:
             print("⚠  Keine lesbaren Kapitel gefunden – ist die Datei gültig?", file=sys.stderr)
             sys.exit(1)
-
-        safe_book = re.sub(r'[\\/:*?"<>|]', "_", book_title)[:80]
 
         # Pre-compute all (chapter_idx, split_idx, segment_chunk) tuples
         jobs: list[tuple[int, int, list[dict]]] = []
