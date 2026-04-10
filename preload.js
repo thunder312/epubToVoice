@@ -43,6 +43,9 @@ contextBridge.exposeInMainWorld('api', {
   // Shell
   revealPath: p => ipcRenderer.invoke('reveal-path', p),
 
+  // Resume detection
+  checkResumable: (filePath, outputDir) => ipcRenderer.invoke('check-resumable', filePath, outputDir || null),
+
   // Events (returns unsubscribe fn)
   onProgress: callback => {
     const handler = (_e, data) => callback(data);

@@ -448,6 +448,21 @@ ipcMain.handle('reveal-path', (event, p) => {
   shell.showItemInFolder(p);
 });
 
+ipcMain.handle('check-resumable', (event, filePath, customOutputDir) => {
+  const parsed = path.parse(filePath);
+  const stem   = parsed.name;
+  const outDir = customOutputDir
+    ? path.join(customOutputDir, stem)
+    : path.join(parsed.dir, stem);
+  try {
+    const files = fs.readdirSync(outDir);
+    const mp3s  = files.filter(f => f.toLowerCase().endsWith('.mp3'));
+    return { resumable: mp3s.length > 0, outputDir: outDir, mp3Count: mp3s.length };
+  } catch {
+    return { resumable: false };
+  }
+});
+
 // ---------------------------------------------------------------------------
 // ZIP helper
 // ---------------------------------------------------------------------------

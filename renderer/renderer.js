@@ -447,19 +447,29 @@ function bindEvents() {
 // ---------------------------------------------------------------------------
 // Queue management
 // ---------------------------------------------------------------------------
-function addToQueue(epubPaths) {
+async function addToQueue(epubPaths) {
   if (!epubPaths || !epubPaths.length) return;
   const existing = new Set(queue.map(j => j.path));
-  const newPaths = [];
+  const newJobs = [];
   for (const p of epubPaths) {
     if (existing.has(p)) continue;
-    queue.push({ id: crypto.randomUUID(), path: p, name: baseName(p), status: 'queued', current: 0, total: 0, outputPath: null, subText: '', startPage: null, endPage: null, skipChapters: [], structure: null });
-    newPaths.push(p);
+    const job = { id: crypto.randomUUID(), path: p, name: baseName(p), status: 'queued', current: 0, total: 0, outputPath: null, subText: '', startPage: null, endPage: null, skipChapters: [], structure: null, resume: false };
+    queue.push(job);
+    newJobs.push(job);
   }
-  if (newPaths.length) {
-    log(`${newPaths.length} Datei(en) zur Warteschlange hinzugefügt.`);
-    // Detect language from the first newly added file
-    detectAndSuggestVoice(newPaths[0]);
+  if (newJobs.length) {
+    log(`${newJobs.length} Datei(en) zur Warteschlange hinzugefügt.`);
+    detectAndSuggestVoice(newJobs[0].path);
+    // Check each new job for existing partial output
+    for (const job of newJobs) {
+      const r = await window.api.checkResumable(job.path, settings.outputDir || null);
+      if (r.resumable) {
+        job.status  = 'resumable';
+        job.resume  = true;
+        job.subText = `${r.mp3Count} Split(s) bereits vorhanden – Fortsetzen möglich`;
+        log(`▶ ${job.name}: ${r.mp3Count} Split(s) gefunden – "Fortsetzen" klicken um weiterzumachen.`, 'warn');
+      }
+    }
   }
   renderQueue();
 }
