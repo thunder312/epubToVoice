@@ -25,7 +25,10 @@
       { "from": "requirements.txt", "to": "requirements.txt" }
     ],
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "target": [
+        { "target": "nsis",     "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
       "icon": "renderer/assets/icon.ico"
     },
     "mac": {
