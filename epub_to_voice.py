@@ -1073,9 +1073,9 @@ class EpubConverter:
                     txt_path = save_translated_txt(
                         chapters, self.output_dir, book_title, self.epub_path.stem
                     )
-                    print(f"📝  Übersetzung als TXT gespeichert: {txt_path.name}")
+                    txt_path.unlink(missing_ok=True)
                 except Exception as exc:
-                    print(f"  ⚠  TXT-Export fehlgeschlagen: {exc}", file=sys.stderr)
+                    print(f"  ⚠  TXT-Prüfung fehlgeschlagen: {exc}", file=sys.stderr)
 
         if self.max_chapters:
             chapters = chapters[:self.max_chapters]
