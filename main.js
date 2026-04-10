@@ -410,8 +410,11 @@ ipcMain.handle('start-conversion', async (event, opts) => {
       if (buf.includes('chars) …')) { flush(buf); buf = ''; }
     });
 
+    let stderrBuf = '';
     proc.stderr.on('data', chunk => {
-      event.sender.send('conversion-progress', { jobId, line: chunk.toString().trim(), isError: true });
+      const text = chunk.toString();
+      stderrBuf += text;
+      event.sender.send('conversion-progress', { jobId, line: text.trim(), isError: true });
     });
 
     proc.on('close', async code => {
@@ -431,7 +434,11 @@ ipcMain.handle('start-conversion', async (event, opts) => {
       } else if (code === 0) {
         resolve({ success: true, outputPath });
       } else {
-        resolve({ success: false, error: `Python exited with code ${code}`, exitCode: code });
+        let errMsg = `Python exited with code ${code}`;
+        if (stderrBuf.includes('piper-tts') || stderrBuf.includes('No module named')) {
+          errMsg = stderrBuf.trim();
+        }
+        resolve({ success: false, error: errMsg, exitCode: code });
       }
     });
 

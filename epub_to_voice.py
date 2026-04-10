@@ -929,6 +929,19 @@ class EpubConverter:
     # ------------------------------------------------------------------
     async def convert(self) -> None:
         """Main entry point – convert all chapters to MP3 files."""
+        # Preflight: check piper-tts is installed when Piper engine is selected
+        if self.tts_engine == "piper":
+            try:
+                from piper.voice import PiperVoice  # noqa: F401
+            except ImportError:
+                print(
+                    "❌  Piper TTS nicht installiert.\n"
+                    "    Bitte ausführen:  pip install piper-tts\n"
+                    "    Oder Edge TTS (online) in der GUI wählen.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
         self.output_dir.mkdir(parents=True, exist_ok=True)
         chapters, book_title = self._load_chapters()
 
@@ -969,8 +982,12 @@ class EpubConverter:
 
         # --- Open HTML log ---
         log_path = self.output_dir / f"{safe_book}_protokoll.html"
+        engine_label = (
+            f"Piper ({self.piper_voice})" if self.tts_engine == "piper"
+            else f"Edge ({self.voice})"
+        )
         log = HtmlLog(log_path, book_title, {
-            "Stimme":  self.voice,
+            "Engine":  engine_label,
             "Rate":    self.rate,
             "Lautst.": self.volume,
             "Ausgabe": str(self.output_dir),
@@ -978,7 +995,10 @@ class EpubConverter:
         })
 
         log.log(f"📖  Buch:      {book_title}", "info")
-        log.log(f"🔊  Stimme:    {self.voice}  |  Rate: {self.rate}  |  Vol: {self.volume}", "info")
+        if self.tts_engine == "piper":
+            log.log(f"🔊  Engine:    Piper TTS (offline)  |  Stimme: {self.piper_voice}  |  Rate: {self.rate}", "info")
+        else:
+            log.log(f"🔊  Engine:    Edge TTS  |  Stimme: {self.voice}  |  Rate: {self.rate}  |  Vol: {self.volume}", "info")
         log.log(f"📂  Ausgabe:   {self.output_dir}", "dim")
         log.log(f"📑  Kapitel:   {len(chapters)}  |  Splits: {total}", "info")
         log.log("", "sep")
