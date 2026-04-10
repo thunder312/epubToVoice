@@ -834,17 +834,29 @@ class EpubConverter:
     ) -> None:
         """Synthesise a chunk with Piper TTS (offline) and save as WAV."""
         import wave as _wave
+        from piper.config import SynthesisConfig  # type: ignore
 
         text = segments_to_plain_text(segments)
         if not text.strip():
             return
 
-        voice        = self._get_piper_voice()
-        length_scale = _rate_to_piper_length_scale(self.rate)
+        voice  = self._get_piper_voice()
+        length = _rate_to_piper_length_scale(self.rate)
+        cfg    = SynthesisConfig(length_scale=length)
 
-        wav_path = out_path  # caller already uses .wav extension
+        # synthesize() returns an iterable of AudioChunk objects
+        chunks = list(voice.synthesize(text, syn_config=cfg))
+        if not chunks:
+            raise RuntimeError("Piper TTS lieferte keine Audio-Daten.")
+
+        wav_path = out_path
         with _wave.open(str(wav_path), "wb") as wf:
-            voice.synthesize(text, wf, length_scale=length_scale)
+            first = chunks[0]
+            wf.setnchannels(first.sample_channels)
+            wf.setsampwidth(first.sample_width)
+            wf.setframerate(first.sample_rate)
+            for chunk in chunks:
+                wf.writeframes(chunk.audio_int16_bytes)
 
         if not wav_path.exists() or wav_path.stat().st_size < 512:
             wav_path.unlink(missing_ok=True)
