@@ -1452,7 +1452,8 @@ def _translate_texts(texts: list[str], target_lang: str, source_lang: str = "aut
         translated = translator.translate(joined) or ""
         split      = translated.split(SEP)
         for i, idx in enumerate(indices):
-            results[idx] = split[i].strip() if i < len(split) else parts[i]
+            raw = split[i] if i < len(split) else parts[i]
+            results[idx] = sanitize_text(raw) or parts[i]
 
     for idx, text in enumerate(texts):
         needed = len(text) + len(SEP)
