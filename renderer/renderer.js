@@ -357,16 +357,17 @@ function bindEvents() {
     renderQueue();
   });
 
-  // Drop zone
-  dropZone.addEventListener('dragover', e => {
+  // Drag & drop – accept anywhere in the window, highlight the drop zone
+  document.addEventListener('dragover', e => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     dropZone.classList.add('drag-over');
   });
-  dropZone.addEventListener('dragleave', e => {
-    if (!dropZone.contains(e.relatedTarget)) dropZone.classList.remove('drag-over');
+  document.addEventListener('dragleave', e => {
+    // Only remove highlight when leaving the window entirely
+    if (!e.relatedTarget) dropZone.classList.remove('drag-over');
   });
-  dropZone.addEventListener('drop', async e => {
+  document.addEventListener('drop', async e => {
     e.preventDefault();
     dropZone.classList.remove('drag-over');
     const files = [...e.dataTransfer.files];
