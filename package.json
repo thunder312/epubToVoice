@@ -25,16 +25,13 @@
       { "from": "requirements.txt", "to": "requirements.txt" }
     ],
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }],
-      "icon": "renderer/assets/icon.ico"
+      "target": [{ "target": "nsis", "arch": ["x64"] }]
     },
     "mac": {
-      "target": [{ "target": "dmg", "arch": ["x64", "arm64"] }],
-      "icon": "renderer/assets/icon.icns"
+      "target": [{ "target": "dmg", "arch": ["x64", "arm64"] }]
     },
     "linux": {
-      "target": [{ "target": "AppImage", "arch": ["x64"] }],
-      "icon": "renderer/assets/icon.png"
+      "target": [{ "target": "AppImage", "arch": ["x64"] }]
     }
   }
 }
