@@ -588,7 +588,7 @@ function buildJobEl(job) {
   el.dataset.jobId = job.id;
 
   const pct = job.total > 0 ? Math.round((job.current / job.total) * 100) : 0;
-  const statusLabels = { queued: 'Wartend', processing: 'Läuft…', done: 'Fertig', error: 'Fehler', cancelled: 'Abgebrochen' };
+  const statusLabels = { queued: 'Wartend', processing: 'Läuft…', done: 'Fertig', error: 'Fehler', cancelled: 'Abgebrochen', resumable: 'Unterbrochen' };
 
   const selHint = job.status === 'queued' && (job.startPage || job.endPage || job.skipChapters?.length)
     ? `<span class="item-sel">✂ S.${job.startPage??'1'}–${job.endPage??'∞'}${job.skipChapters?.length ? ` · ${job.skipChapters.length} übersprungen` : ''}</span>`
@@ -602,6 +602,9 @@ function buildJobEl(job) {
       ${job.status === 'queued' ? `
         <button class="item-preview" data-preview="${job.id}" title="Seitenauswahl / Vorschau">🔍</button>
         <button class="item-remove"  data-remove="${job.id}"  title="Entfernen">✕</button>` : ''}
+      ${job.status === 'resumable' ? `
+        <button class="item-resume" data-resume="${job.id}" title="Konvertierung fortsetzen">▶ Fortsetzen</button>
+        <button class="item-remove" data-remove="${job.id}"  title="Entfernen">✕</button>` : ''}
     </div>
     <div class="progress-wrap">
       <div class="progress-bar" style="width:${pct}%"></div>
@@ -621,6 +624,16 @@ function buildJobEl(job) {
     const id = e.currentTarget.dataset.remove;
     queue = queue.filter(j => j.id !== id);
     renderQueue();
+  });
+  el.querySelector('[data-resume]')?.addEventListener('click', e => {
+    const id = e.currentTarget.dataset.resume;
+    const j  = getJob(id);
+    if (!j) return;
+    j.status  = 'queued';
+    j.resume  = true;
+    j.subText = '';
+    renderQueue();
+    startConversion();
   });
   el.querySelector('[data-reveal]')?.addEventListener('click', e => {
     window.api.revealPath(e.currentTarget.dataset.reveal);
@@ -683,6 +696,7 @@ async function startConversion(previewMode = false) {
       endPage:      job.endPage     ?? null,
       skipChapters: job.skipChapters ?? [],
       translateTo:  settings.translateTo || null,
+      resume:       job.resume || false,
     };
 
     const result = await window.api.startConversion(opts);
@@ -698,9 +712,11 @@ async function startConversion(previewMode = false) {
       j.subText    = result.outputPath ? `→ ${result.outputPath}` : 'Fertig';
       log(`✅ Fertig: ${j.name}`, 'ok');
     } else {
-      j.status  = 'error';
+      const isServerAbort = result.exitCode === 2;
+      j.status  = isServerAbort ? 'resumable' : 'error';
       j.subText = result.error || 'Unbekannter Fehler';
       log(`✗ Fehler bei ${j.name}: ${j.subText}`, 'error');
+      if (isServerAbort) log('▶ Konvertierung kann fortgesetzt werden wenn der Server wieder erreichbar ist.', 'warn');
     }
     renderQueue();
     updateJobEl(j);

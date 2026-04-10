@@ -350,7 +350,7 @@ ipcMain.handle('demo-voice', async (event, { voice, rate, volume }) => {
 
 ipcMain.handle('start-conversion', async (event, opts) => {
   const { jobId, epubPath, outputDir, voice, rate, volume, skipShort, maxChapters, merge, createZip,
-          startPage, endPage, skipChapters, translateTo } = opts;
+          startPage, endPage, skipChapters, translateTo, resume } = opts;
 
   const cmd = await getPython();
   if (!cmd) return { error: 'Python not found' };
@@ -367,6 +367,7 @@ ipcMain.handle('start-conversion', async (event, opts) => {
   if (endPage   != null)       args.push(`--end-page=${endPage}`);
   if (skipChapters && skipChapters.length) args.push(`--skip-chapters=${skipChapters.join(',')}`);
   if (translateTo)                         args.push(`--translate-to=${translateTo}`);
+  if (resume)                              args.push('--resume');
 
   return new Promise(resolve => {
     const proc = spawn(cmd, args, { shell: false, env: { ...process.env, PYTHONIOENCODING: 'utf-8' } });
@@ -424,7 +425,7 @@ ipcMain.handle('start-conversion', async (event, opts) => {
       } else if (code === 0) {
         resolve({ success: true, outputPath });
       } else {
-        resolve({ success: false, error: `Python exited with code ${code}` });
+        resolve({ success: false, error: `Python exited with code ${code}`, exitCode: code });
       }
     });
 

@@ -309,6 +309,7 @@ h1           { font-size: 16px; font-weight: 600; letter-spacing: .3px; }
 .queue-item--processing { border-color: var(--primary); }
 .queue-item--done       { border-color: rgba(34,197,94,.35); }
 .queue-item--error      { border-color: rgba(239,68,68,.35); }
+.queue-item--resumable  { border-color: rgba(251,146,60,.5); }
 
 .item-top {
   display: flex;
@@ -352,6 +353,7 @@ h1           { font-size: 16px; font-weight: 600; letter-spacing: .3px; }
 .status--done       { background: var(--success-dim); color: var(--success); }
 .status--error      { background: var(--error-dim);   color: var(--error);   }
 .status--cancelled  { background: var(--warning-dim); color: var(--warning); }
+.status--resumable  { background: rgba(251,146,60,.15); color: #fb923c; }
 
 /* Progress bar */
 .progress-wrap {
@@ -368,8 +370,23 @@ h1           { font-size: 16px; font-weight: 600; letter-spacing: .3px; }
   width: 0%;
   transition: width .3s ease;
 }
-.queue-item--done .progress-bar   { background: var(--success); width: 100% !important; }
-.queue-item--error .progress-bar  { background: var(--error); }
+.queue-item--done .progress-bar      { background: var(--success); width: 100% !important; }
+.queue-item--error .progress-bar    { background: var(--error); }
+.queue-item--resumable .progress-bar { background: #fb923c; }
+
+.item-resume {
+  background: rgba(251,146,60,.15);
+  border: 1px solid rgba(251,146,60,.4);
+  color: #fb923c;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 4px;
+  transition: background .15s;
+  white-space: nowrap;
+}
+.item-resume:hover { background: rgba(251,146,60,.28); }
 
 .item-sub {
   font-size: 11px;

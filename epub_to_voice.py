@@ -353,6 +353,7 @@ class EpubConverter:
         end_page: int | None = None,        # PDF: last page to include (1-based, inclusive)
         skip_chapters: set[int] | None = None,  # EPUB/TXT: doc-order indices to skip
         translate_to: str | None = None,        # BCP-47 language code to translate into (e.g. "de")
+        resume: bool = False,                   # skip splits whose MP3 already exists
     ):
         self.epub_path    = Path(epub_path)
         self.output_dir   = (
@@ -369,6 +370,7 @@ class EpubConverter:
         self.end_page      = end_page
         self.skip_chapters = skip_chapters or set()
         self.translate_to  = translate_to or None
+        self.resume        = resume
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -866,10 +868,20 @@ class EpubConverter:
         # Jobs that failed with a server error → retried once after the main loop
         failed_jobs: list[tuple[str, list[dict], Path]] = []
 
+        if self.resume:
+            log.log("▶  Fortsetzen – bereits vorhandene Splits werden übersprungen.", "info")
+
         for counter, (ch_idx, sp_idx, seg_chunk) in enumerate(jobs, start=1):
             filename = self.output_dir / f"{ch_idx:03d}_{sp_idx:03d}_{safe_book}.mp3"
             chars    = sum(len(s["text"]) for s in seg_chunk)
             prefix   = f"  [{counter:>3}/{total}]  {ch_idx:03d}_{sp_idx:03d}  ({chars:,} Zeichen)"
+
+            # Resume mode: skip splits that already have a valid MP3
+            if self.resume and filename.exists() and filename.stat().st_size > 1024:
+                produced.append(filename)
+                log.log(f"{prefix} ⏭  übersprungen (vorhanden)", "dim")
+                print(f"{prefix} ⏭")
+                continue
 
             print(f"{prefix} … ", end="", flush=True)
 
@@ -1503,6 +1515,8 @@ Examples:
                         help='Comma-separated doc-order indices of chapters/sections to skip')
     parser.add_argument("--translate-to", default="",
                         help='Translate text to this language before TTS, e.g. "de" for German (requires deep_translator)')
+    parser.add_argument("--resume", action="store_true",
+                        help='Resume interrupted conversion: skip splits whose MP3 already exists')
     return parser
 
 
@@ -1561,6 +1575,7 @@ def main() -> None:
         end_page      = args.end_page,
         skip_chapters = skip_set,
         translate_to  = args.translate_to or None,
+        resume        = args.resume,
     )
     asyncio.run(converter.convert())
 
