@@ -783,6 +783,8 @@ class EpubConverter:
         produced: list[Path] = []
         consecutive_errors = 0
         MAX_CONSECUTIVE = 3   # abort after this many consecutive server errors
+        # Jobs that failed with a server error → retried once after the main loop
+        failed_jobs: list[tuple[str, list[dict], Path]] = []
 
         for counter, (ch_idx, sp_idx, seg_chunk) in enumerate(jobs, start=1):
             filename = self.output_dir / f"{ch_idx:03d}_{sp_idx:03d}_{safe_book}.mp3"
@@ -801,6 +803,7 @@ class EpubConverter:
                 consecutive_errors += 1
                 msg = f"{prefix} ✗  SERVER NICHT ERREICHBAR: {exc}"
                 log.log(msg, "error")
+                failed_jobs.append((prefix, seg_chunk, filename))
                 if consecutive_errors >= MAX_CONSECUTIVE:
                     abort = (
                         "❌  TTS-Server antwortet nicht (speech.platform.bing.com).\n"
@@ -817,6 +820,35 @@ class EpubConverter:
             except Exception as exc:
                 consecutive_errors = 0
                 log.log(f"{prefix} ✗  FEHLER: {exc}", "error")
+
+        # --- Nachproduktion fehlgeschlagener Chunks ---
+        if failed_jobs:
+            wait_sec = 20
+            retry_msg = (
+                f"\n🔁  {len(failed_jobs)} Split(s) fehlgeschlagen – "
+                f"warte {wait_sec} s und versuche erneut …"
+            )
+            log.log(retry_msg.strip(), "warn")
+            print(retry_msg, flush=True)
+            await asyncio.sleep(wait_sec)
+            log.log("", "sep")
+
+            for prefix, seg_chunk, filename in failed_jobs:
+                print(f"{prefix} (Wiederholung) … ", end="", flush=True)
+                try:
+                    await self._synthesise_chunk(seg_chunk, filename, log=log)
+                    produced.append(filename)
+                    log.log(f"{prefix} ↺ ✓", "ok")
+                    print("↺ ✓")
+                    await asyncio.sleep(0.5)
+                except TtsServerError as exc:
+                    log.log(f"{prefix} ↺ ✗  SERVER NICHT ERREICHBAR: {exc}", "error")
+                    print("↺ ✗")
+                except Exception as exc:
+                    log.log(f"{prefix} ↺ ✗  FEHLER: {exc}", "error")
+                    print("↺ ✗")
+
+            produced.sort()   # Wiederholungen in korrekte Reihenfolge einordnen
 
         log.log("", "sep")
 
