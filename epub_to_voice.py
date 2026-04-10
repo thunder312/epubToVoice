@@ -112,6 +112,31 @@ def clean_linebreaks(content: str) -> str:
     return "\n\n".join(result)
 
 
+def merge_incomplete_segments(segments: list[dict]) -> list[dict]:
+    """
+    Merge consecutive SEG_PARAGRAPH segments where the preceding segment
+    does not end with sentence-ending punctuation (. , ! ? : ;).
+    Heading segments are always kept as-is and act as merge barriers.
+    This removes unwanted TTS pauses caused by mid-sentence paragraph breaks.
+    """
+    PUNCT_END = re.compile(r"[.!?:;,]\s*$")
+    result: list[dict] = []
+    for seg in segments:
+        if (
+            seg["type"] == SEG_PARAGRAPH
+            and result
+            and result[-1]["type"] == SEG_PARAGRAPH
+            and not PUNCT_END.search(result[-1]["text"])
+        ):
+            result[-1] = {
+                "type": SEG_PARAGRAPH,
+                "text": result[-1]["text"].rstrip() + " " + seg["text"].lstrip(),
+            }
+        else:
+            result.append(dict(seg))
+    return result
+
+
 def is_toc_title(title: str) -> bool:
     """Return True if the title matches common TOC heading patterns."""
     return bool(TOC_TITLE_RE.match(title.strip()))
@@ -694,6 +719,9 @@ class EpubConverter:
                 if len(text) >= self.skip_short:
                     segments_raw.append({"type": SEG_PARAGRAPH, "text": text})
 
+        # Merge consecutive paragraphs that end mid-sentence
+        segments_raw = merge_incomplete_segments(segments_raw)
+
         # Group flat segments into logical chapters (split at heading boundaries)
         chapters:    list[dict] = []
         current:     list[dict] = []
@@ -774,6 +802,9 @@ class EpubConverter:
 
         if not segments_raw:
             return [], title
+
+        # Merge consecutive paragraphs that end mid-sentence (no trailing punctuation)
+        segments_raw = merge_incomplete_segments(segments_raw)
 
         # Group flat segments into logical chapters (split at heading boundaries)
         chapters: list[dict] = []
