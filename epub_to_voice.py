@@ -71,6 +71,47 @@ def sanitize_text(text: str) -> str:
     return text
 
 
+def clean_linebreaks(content: str) -> str:
+    """
+    Preprocess raw text: remove line breaks that are mid-sentence.
+    Keeps newlines only after sentence-ending punctuation (. , ! ? : ;).
+    Also merges consecutive paragraph blocks (double-newline separated)
+    when the preceding block does not end with such punctuation.
+    """
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+
+    PUNCT_END = re.compile(r"[.!?:;,]\s*$")
+
+    # Step 1: Within each paragraph block, join lines that don't end with punctuation
+    para_blocks = re.split(r"\n{2,}", content)
+    cleaned_blocks: list[str] = []
+    for block in para_blocks:
+        lines = block.split("\n")
+        merged: list[str] = []
+        for line in lines:
+            if not merged:
+                merged.append(line)
+            elif not merged[-1].strip():
+                merged.append(line)
+            elif PUNCT_END.search(merged[-1]):
+                merged.append(line)
+            else:
+                merged[-1] = merged[-1].rstrip() + " " + line.lstrip()
+        cleaned_blocks.append("\n".join(merged).strip())
+
+    # Step 2: Merge paragraph blocks where the preceding block doesn't end with punctuation
+    result: list[str] = []
+    for block in cleaned_blocks:
+        if not block:
+            continue
+        if result and not PUNCT_END.search(result[-1]):
+            result[-1] = result[-1].rstrip() + " " + block
+        else:
+            result.append(block)
+
+    return "\n\n".join(result)
+
+
 def is_toc_title(title: str) -> bool:
     """Return True if the title matches common TOC heading patterns."""
     return bool(TOC_TITLE_RE.match(title.strip()))
@@ -598,6 +639,18 @@ class EpubConverter:
         raw_title = self._clean_title(self.epub_path.stem) or self.epub_path.stem
         content   = self.epub_path.read_text(encoding="utf-8", errors="replace")
 
+        # Remove mid-sentence line breaks so each paragraph is a clean,
+        # uninterrupted unit of text (avoids unwanted TTS pauses).
+        content = clean_linebreaks(content)
+
+        # Optionally save the preprocessed file next to the original.
+        if self.translate_to:
+            pre_path = self.epub_path.with_name(
+                self.epub_path.stem + "_preprocessed.txt"
+            )
+            pre_path.write_text(content, encoding="utf-8")
+            print(f"  📝  Vorverarbeitete Datei gespeichert: {pre_path.name}")
+
         HEADING_RE = re.compile(
             r"(?m)^(?:Kapitel|Chapter|Teil|Part|Abschnitt|Section|Epilog|Prolog|Vorwort|Nachwort)\s+\S.*$"
         )
@@ -985,6 +1038,13 @@ class EpubConverter:
                     print(f"📄  Übersetzung als PDF gespeichert: {pdf_path.name}")
                 except Exception as exc:
                     print(f"  ⚠  PDF-Export fehlgeschlagen: {exc}", file=sys.stderr)
+                try:
+                    txt_path = save_translated_txt(
+                        chapters, self.output_dir, book_title, self.epub_path.stem
+                    )
+                    print(f"📝  Übersetzung als TXT gespeichert: {txt_path.name}")
+                except Exception as exc:
+                    print(f"  ⚠  TXT-Export fehlgeschlagen: {exc}", file=sys.stderr)
 
         if self.max_chapters:
             chapters = chapters[:self.max_chapters]
@@ -1421,6 +1481,51 @@ def save_translated_pdf(
 
     writer.close()
     return pdf_path
+
+
+def save_translated_txt(
+    chapters: list[dict],
+    output_dir: Path,
+    book_title: str,
+    file_stem: str,
+) -> Path:
+    """
+    Save translated chapters as a plain-text file in output_dir.
+    Each segment becomes one paragraph, headings are separated by blank lines.
+    Also checks for leftover newlines in segment texts and warns about them.
+    """
+    safe_stem = re.sub(r'[\\/:*?"<>|]', "_", file_stem)[:80]
+    txt_path  = output_dir / f"{safe_stem}_uebersetzt.txt"
+
+    lines: list[str] = [book_title, ""]
+    bad_segs = 0
+    for chapter in chapters:
+        title = chapter.get("title", "")
+        if title:
+            lines.append(title)
+            lines.append("")
+        for seg in chapter.get("segments", []):
+            text = seg.get("text", "")
+            if not text:
+                continue
+            if "\n" in text:
+                bad_segs += 1
+                text = sanitize_text(text)   # fix leftover translator newlines
+                seg["text"] = text
+            lines.append(text)
+            lines.append("")
+
+    txt_path.write_text("\n".join(lines), encoding="utf-8")
+
+    if bad_segs:
+        print(
+            f"  ⚠  {bad_segs} Segment(e) enthielten unerwünschte Zeilenumbrüche "
+            f"nach der Übersetzung – wurden bereinigt."
+        )
+    else:
+        print("  ✔  Keine unerwünschten Zeilenumbrüche durch Übersetzung eingeführt.")
+
+    return txt_path
 
 
 # ---------------------------------------------------------------------------
