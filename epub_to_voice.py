@@ -1531,11 +1531,16 @@ def save_translated_txt(
     lines: list[str] = [book_title, ""]
     bad_segs = 0
     for chapter in chapters:
+        segs = chapter.get("segments", [])
         title = chapter.get("title", "")
-        if title:
+        # Only output the chapter title separately when the first segment is NOT
+        # already a heading – otherwise the (translated) heading segment is output
+        # below and the untranslated title would create a duplicate.
+        first_is_heading = bool(segs and segs[0].get("type") == SEG_HEADING)
+        if title and not first_is_heading:
             lines.append(title)
             lines.append("")
-        for seg in chapter.get("segments", []):
+        for seg in segs:
             text = seg.get("text", "")
             if not text:
                 continue
