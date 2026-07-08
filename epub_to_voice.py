@@ -19,7 +19,10 @@ import argparse
 import html as _html
 import json
 import re
+import shutil
+import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -62,6 +65,26 @@ PARA_BREAK         = "400ms"
 # ---------------------------------------------------------------------------
 # Text / segment helpers
 # ---------------------------------------------------------------------------
+
+_DASH_RE = re.compile(r"[–—]")  # – (en-dash, U+2013) and — (em-dash, U+2014)
+
+
+def replace_dashes_for_tts(text: str) -> str:
+    """
+    Replace en-dash (–) and em-dash (—) with a comma.
+
+    Edge TTS reads these characters aloud literally as the word "Dash"
+    instead of pausing, so they must be rewritten before synthesis.
+    """
+    if not text or not _DASH_RE.search(text):
+        return text
+    text = _DASH_RE.sub(",", text)
+    text = re.sub(r"\s*,\s*", ", ", text)            # normalize spacing around commas
+    text = re.sub(r"(,\s*){2,}", ", ", text)         # collapse repeated commas
+    text = re.sub(r"^\s*,\s*", "", text)             # drop leading comma (dialogue dash)
+    text = re.sub(r"\s*,\s*([.!?…])", r"\1", text)   # drop comma right before terminal punctuation
+    return text.strip()
+
 
 def sanitize_text(text: str) -> str:
     """Remove control characters and normalize whitespace."""
@@ -190,7 +213,7 @@ def segments_to_tts_text(segments: list[dict]) -> str:
 
     parts: list[str] = []
     for i, seg in enumerate(segments):
-        text = seg["text"].strip()
+        text = replace_dashes_for_tts(seg["text"].strip())
         if not text:
             continue
 
@@ -226,7 +249,7 @@ def segments_to_fallback_text(segments: list[dict]) -> str:
     for i, seg in enumerate(segments):
         if i > 0:
             parts.append("Neues Kapitel." if seg["type"] == SEG_HEADING else "Weiter.")
-        parts.append(seg["text"])
+        parts.append(replace_dashes_for_tts(seg["text"]))
     return " ".join(parts)
 
 
@@ -441,6 +464,7 @@ class EpubConverter:
         resume: bool = False,                   # skip splits whose output file already exists
         tts_engine: str = "edge",               # "edge" or "piper"
         piper_voice: str = "de_DE-thorsten-high",
+        normalize_volume: bool = True,          # loudness-normalize splits via ffmpeg (best effort)
     ):
         self.epub_path    = Path(epub_path)
         self.output_dir   = (
@@ -458,9 +482,10 @@ class EpubConverter:
         self.skip_chapters = skip_chapters or set()
         self.translate_to  = translate_to or None
         self.resume        = resume
-        self.tts_engine    = tts_engine
-        self.piper_voice   = piper_voice
-        self._piper_instance = None   # lazy-loaded
+        self.tts_engine       = tts_engine
+        self.piper_voice      = piper_voice
+        self.normalize_volume = normalize_volume
+        self._piper_instance  = None   # lazy-loaded
 
     @property
     def _audio_ext(self) -> str:
@@ -854,6 +879,78 @@ class EpubConverter:
 
     # ------------------------------------------------------------------
     @staticmethod
+    def _ffmpeg_path() -> str | None:
+        """Return the path to the ffmpeg executable, or None if not installed."""
+        return shutil.which("ffmpeg")
+
+    @staticmethod
+    def _normalize_mp3_loudness(path: Path, target_lufs: float = -16.0) -> bool:
+        """
+        In-place loudness-normalize an MP3 via ffmpeg's loudnorm filter
+        (single-pass, EBU R128). Leaves the file untouched on failure.
+        Returns True on success.
+        """
+        ffmpeg = EpubConverter._ffmpeg_path()
+        if not ffmpeg:
+            return False
+        tmp = path.with_suffix(".norm.mp3")
+        try:
+            result = subprocess.run(
+                [
+                    ffmpeg, "-y", "-i", str(path),
+                    "-af", f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11",
+                    "-ar", "44100", "-b:a", "128k",
+                    str(tmp),
+                ],
+                capture_output=True,
+            )
+        except OSError:
+            tmp.unlink(missing_ok=True)
+            return False
+        if result.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
+            # On Windows a virus scanner can briefly hold a lock on a just-written
+            # file; retry the rename a few times before giving up.
+            for attempt in range(5):
+                try:
+                    tmp.replace(path)
+                    return True
+                except OSError:
+                    if attempt == 4:
+                        tmp.unlink(missing_ok=True)
+                        return False
+                    time.sleep(0.2)
+        tmp.unlink(missing_ok=True)
+        return False
+
+    @staticmethod
+    def _concat_mp3_ffmpeg(parts: list[Path], merged: Path) -> bool:
+        """
+        Properly concatenate MP3 files via ffmpeg's concat demuxer
+        (stream copy, no re-encoding). Returns True on success.
+        """
+        ffmpeg = EpubConverter._ffmpeg_path()
+        if not ffmpeg:
+            return False
+        list_file = merged.with_suffix(".concat.txt")
+        list_file.write_text(
+            "\n".join(f"file '{p.resolve().as_posix()}'" for p in parts),
+            encoding="utf-8",
+        )
+        try:
+            result = subprocess.run(
+                [
+                    ffmpeg, "-y", "-f", "concat", "-safe", "0",
+                    "-i", str(list_file), "-c", "copy", str(merged),
+                ],
+                capture_output=True,
+            )
+        except OSError:
+            result = None
+        list_file.unlink(missing_ok=True)
+        return bool(result) and result.returncode == 0 and merged.exists() and merged.stat().st_size > 0
+
+    # ------------------------------------------------------------------
+    @staticmethod
     def _piper_model_dir() -> Path:
         """Return (and create) the directory where Piper models are stored."""
         import os
@@ -1216,15 +1313,32 @@ class EpubConverter:
 
         log.log("", "sep")
 
+        # --- Lautstärke-Normalisierung zwischen Kapiteln (ffmpeg, best effort) ---
+        if self.normalize_volume and produced:
+            if self._ffmpeg_path():
+                msg = f"🔊  Normalisiere Lautstärke von {len(produced)} Datei(en) … "
+                log.log(msg, "info")
+                print(msg, end="", flush=True)
+                ok_count = sum(1 for part in produced if self._normalize_mp3_loudness(part))
+                log.log(f"✓ {ok_count}/{len(produced)} normalisiert.", "ok")
+                print("✓")
+            else:
+                log.log("⚠  ffmpeg nicht gefunden – Lautstärke-Normalisierung übersprungen.", "warn")
+                print("⚠  ffmpeg nicht gefunden – Lautstärke-Normalisierung übersprungen.")
+
         if self.merge and produced:
             merged = self.output_dir / f"{safe_book}{self._audio_ext}"
             msg = f"🔗  Zusammenführen von {len(produced)} Datei(en) → {merged.name} … "
             log.log(msg, "info")
             print(msg, end="", flush=True)
-            with open(merged, "wb") as fout:
-                for part in produced:
-                    fout.write(part.read_bytes())
-                    part.unlink()
+            if not self._concat_mp3_ffmpeg(produced, merged):
+                # Fallback: naive byte-concatenation (works for consecutive MP3 frames,
+                # used when ffmpeg is not installed)
+                with open(merged, "wb") as fout:
+                    for part in produced:
+                        fout.write(part.read_bytes())
+            for part in produced:
+                part.unlink(missing_ok=True)
             log.log("✓ Zusammengeführt.", "ok")
             print("✓")
 
@@ -1847,6 +1961,9 @@ Examples:
                         help='TTS engine: "edge" (online, Microsoft) or "piper" (offline, local)')
     parser.add_argument("--piper-voice", default="de_DE-thorsten-high",
                         help='Piper voice name, e.g. "de_DE-thorsten-high" or "en_US-amy-medium"')
+    parser.add_argument("--no-normalize-volume", action="store_false", dest="normalize_volume",
+                        default=True,
+                        help='Disable loudness normalization between chapters (requires ffmpeg; on by default)')
     return parser
 
 
@@ -1908,6 +2025,7 @@ def main() -> None:
         resume        = args.resume,
         tts_engine    = args.tts_engine,
         piper_voice   = args.piper_voice,
+        normalize_volume = args.normalize_volume,
     )
     asyncio.run(converter.convert())
 

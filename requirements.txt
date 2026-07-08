@@ -12,3 +12,7 @@ python-docx>=1.1        # DOCX / DOC reading (optional; required for Word files)
 # pywin32>=306          # DOC conversion via Word COM on Windows (optional; install if .doc support needed)
 piper-tts>=1.2          # Offline TTS engine (optional; required for Piper engine support)
 lameenc>=1.7            # MP3 encoder for Piper output (optional; required for Piper engine support)
+
+# System dependency (not a pip package): ffmpeg must be on PATH for
+# --merge (proper MP3 concatenation) and loudness normalization between
+# chapters. Falls back to naive byte-concat / skips normalization if absent.

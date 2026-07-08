@@ -354,7 +354,7 @@ ipcMain.handle('demo-voice', async (event, { voice, rate, volume }) => {
 
 ipcMain.handle('start-conversion', async (event, opts) => {
   const { jobId, epubPath, outputDir, voice, rate, volume, skipShort, maxChapters, merge, createZip,
-          startPage, endPage, skipChapters, translateTo, resume, ttsEngine, piperVoice } = opts;
+          startPage, endPage, skipChapters, translateTo, resume, ttsEngine, piperVoice, normalizeVolume } = opts;
 
   const cmd = await getPython();
   if (!cmd) return { error: 'Python not found' };
@@ -374,6 +374,7 @@ ipcMain.handle('start-conversion', async (event, opts) => {
   if (resume)                              args.push('--resume');
   if (ttsEngine && ttsEngine !== 'edge')   args.push(`--tts-engine=${ttsEngine}`);
   if (piperVoice)                          args.push(`--piper-voice=${piperVoice}`);
+  if (normalizeVolume === false)           args.push('--no-normalize-volume');
 
   return new Promise(resolve => {
     const proc = spawn(cmd, args, { shell: false, env: { ...process.env, PYTHONIOENCODING: 'utf-8' } });
