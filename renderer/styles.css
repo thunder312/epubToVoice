@@ -526,6 +526,28 @@ details[open] .log-summary::before { content: '▾ '; }
   margin-top: 4px;
 }
 
+/* ── Curated voice quick-picks ─────────────────────────────────────────── */
+.voice-quickpick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin-top: 8px;
+}
+.quickpick-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.quickpick-lang {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  color: var(--text-dim);
+  margin-right: 2px;
+}
+
 /* ── Preview Modal ────────────────────────────────────────────────────── */
 .modal-overlay {
   position: fixed; inset: 0;

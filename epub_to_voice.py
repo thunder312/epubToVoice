@@ -39,6 +39,15 @@ DEFAULT_VOICE  = "de-DE-ConradNeural"
 DEFAULT_RATE   = "-10%"
 DEFAULT_VOLUME = "+0%"
 
+# A few recommended alternative voices (see --list-voices for the full,
+# regularly-updated catalog of all Edge TTS languages/voices):
+#   German female : de-DE-KatjaNeural, de-DE-AmalaNeural,
+#                    de-DE-SeraphinaMultilingualNeural (expressive, multilingual)
+#   German male   : de-DE-ConradNeural (default), de-DE-KillianNeural,
+#                    de-DE-FlorianMultilingualNeural
+#   English female: en-US-JennyNeural, en-US-AriaNeural, en-GB-SoniaNeural
+#   English male  : en-US-GuyNeural, en-US-AndrewMultilingualNeural, en-GB-RyanNeural
+
 
 # ---------------------------------------------------------------------------
 # Segment types & tag sets
@@ -1932,7 +1941,11 @@ Examples:
     )
     parser.add_argument("epub",            nargs="?", help="Path to the .epub, .pdf, .txt, .docx, or .doc file")
     parser.add_argument("-o", "--output",  help="Output directory (default: <stem>/)")
-    parser.add_argument("-v", "--voice",   default=DEFAULT_VOICE, help=f"TTS voice (default: {DEFAULT_VOICE})")
+    parser.add_argument("-v", "--voice",   default=DEFAULT_VOICE,
+                        help=f'TTS voice (default: {DEFAULT_VOICE}). Alternatives e.g. '
+                             f'"de-DE-KatjaNeural"/"de-DE-SeraphinaMultilingualNeural" (female), '
+                             f'"en-US-JennyNeural" (female), "en-US-GuyNeural" (male). '
+                             f'Use --list-voices for the full catalog.')
     parser.add_argument("-r", "--rate",    default=DEFAULT_RATE,  help='Speech rate, e.g. "+15%%" or "-10%%"')
     parser.add_argument("--volume",        default=DEFAULT_VOLUME, help='Volume, e.g. "+10%%"')
     parser.add_argument("--skip-short",    type=int, default=60,

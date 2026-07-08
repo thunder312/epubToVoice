@@ -42,6 +42,7 @@ const voiceDatalist = $('voiceDatalist');
 const demoStatus    = $('demoStatus');
 const langSuggest   = $('langSuggest');
 const voiceCount    = $('voiceCount');
+const voiceQuickPicks = $('voiceQuickPicks');
 
 const rateSlider   = $('rateSlider');
 const rateDisplay  = $('rateDisplay');
@@ -124,6 +125,8 @@ async function loadVoices() {
   voiceCount.style.display = '';
   voiceInput.addEventListener('focus', () => voiceInput.select());
   voiceInput.addEventListener('click', () => voiceInput.select());
+
+  renderQuickPicks();
 }
 
 // ---------------------------------------------------------------------------
@@ -510,6 +513,56 @@ async function addToQueue(epubPaths) {
     }
   }
   renderQueue();
+}
+
+// ---------------------------------------------------------------------------
+// Curated quick-pick voices (German + English favorites, incl. female
+// alternatives) shown permanently under the voice search field.
+// ---------------------------------------------------------------------------
+const QUICK_PICK_VOICES = [
+  { group: 'Deutsch',  name: 'de-DE-ConradNeural',               label: 'Conrad'    },
+  { group: 'Deutsch',  name: 'de-DE-KatjaNeural',                label: 'Katja'     },
+  { group: 'Deutsch',  name: 'de-DE-AmalaNeural',                label: 'Amala'     },
+  { group: 'Deutsch',  name: 'de-DE-SeraphinaMultilingualNeural', label: 'Seraphina' },
+  { group: 'Deutsch',  name: 'de-DE-FlorianMultilingualNeural',   label: 'Florian'   },
+  { group: 'Englisch', name: 'en-US-JennyNeural',                label: 'Jenny'     },
+  { group: 'Englisch', name: 'en-US-GuyNeural',                  label: 'Guy'       },
+  { group: 'Englisch', name: 'en-GB-SoniaNeural',                label: 'Sonia'     },
+  { group: 'Englisch', name: 'en-GB-RyanNeural',                 label: 'Ryan'      },
+];
+
+function renderQuickPicks() {
+  const byName = new Map(allVoices.map(v => [v.name, v]));
+  const groups = {};
+  for (const qp of QUICK_PICK_VOICES) {
+    const v = byName.get(qp.name);
+    if (!v) continue;
+    (groups[qp.group] ||= []).push({ ...qp, locale: v.locale, gender: v.gender });
+  }
+  const groupNames = Object.keys(groups);
+  if (!groupNames.length) {
+    voiceQuickPicks.style.display = 'none';
+    return;
+  }
+
+  voiceQuickPicks.innerHTML = groupNames.map(g => {
+    const pills = groups[g].map(v => {
+      const symbol = v.gender === 'Female' ? '♀' : '♂';
+      return `<button class="lang-pill" data-voice="${escHtml(v.name)}" ` +
+             `title="${escHtml(v.name)} · ${escHtml(v.locale)}">${escHtml(v.label)} ${symbol}</button>`;
+    }).join('');
+    return `<span class="quickpick-group"><span class="quickpick-lang">${escHtml(g)}</span>${pills}</span>`;
+  }).join('');
+
+  voiceQuickPicks.style.display = 'flex';
+  voiceQuickPicks.querySelectorAll('.lang-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const voice = btn.dataset.voice;
+      voiceInput.value = voice;
+      settings.voice   = voice;
+      log(`🔊 Stimme gewechselt zu: ${voice}`);
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------
