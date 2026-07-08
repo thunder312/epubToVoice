@@ -22,6 +22,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -65,10 +66,29 @@ TOC_TITLE_RE = re.compile(
     re.IGNORECASE,
 )
 
-# SSML break durations
-HEADING_PRE_BREAK  = "1500ms"
-HEADING_POST_BREAK = "800ms"
-PARA_BREAK         = "400ms"
+# ---------------------------------------------------------------------------
+# Audio-level pause & prosody design (edge-tts XML-escapes all text, so
+# in-band SSML <break>/<prosody> tags are never interpreted - see
+# Communicate.__init__ in the edge_tts package, which always runs the text
+# through xml.sax.saxutils.escape(). Real, exactly-timed pauses and
+# heading/subheading differentiation are only achievable by synthesising
+# segments individually with per-level pitch/rate and splicing in actual
+# silent audio via ffmpeg - see plan_audio_pieces() / _synthesise_chunk_edge.)
+# ---------------------------------------------------------------------------
+_HEADING_PITCH_HZ  = {1: 15, 2: 8, 3: 3}     # extra pitch per heading level (Hz)
+_HEADING_RATE_PCT  = {1: -6, 2: -3, 3: -1}   # extra (slower) rate per heading level (%)
+_DEFAULT_HEADING_PITCH_HZ = 0
+_DEFAULT_HEADING_RATE_PCT = 0
+
+_PAUSE_BEFORE_HEADING_MS = {1: 900, 2: 650, 3: 450}   # silence before a heading
+_PAUSE_AFTER_HEADING_MS  = {1: 500, 2: 350, 3: 250}   # silence after a heading, before body text
+_DEFAULT_PAUSE_BEFORE_HEADING_MS = 400
+_DEFAULT_PAUSE_AFTER_HEADING_MS  = 200
+_PAUSE_PARAGRAPH_MS   = 220     # silence between two consecutive paragraphs
+_PAUSE_SCENE_BREAK_MS = 1500    # silence for a scene-break marker ("***", "* * *", ...)
+
+# Standalone symbol-only paragraph = scene break marker
+SCENE_BREAK_RE = re.compile(r"^[\s*#•·×~=\-–—]{2,}$")
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +168,8 @@ def merge_incomplete_segments(segments: list[dict]) -> list[dict]:
     """
     Merge consecutive SEG_PARAGRAPH segments where the preceding segment
     does not end with sentence-ending punctuation (. , ! ? : ;).
-    Heading segments are always kept as-is and act as merge barriers.
+    Heading segments and scene-break markers ("***" etc.) are always kept
+    as-is and act as merge barriers.
     This removes unwanted TTS pauses caused by mid-sentence paragraph breaks.
     """
     PUNCT_END = re.compile(r"[.!?:;,]\s*$")
@@ -156,8 +177,10 @@ def merge_incomplete_segments(segments: list[dict]) -> list[dict]:
     for seg in segments:
         if (
             seg["type"] == SEG_PARAGRAPH
+            and not is_scene_break(seg["text"])
             and result
             and result[-1]["type"] == SEG_PARAGRAPH
+            and not is_scene_break(result[-1]["text"])
             and not PUNCT_END.search(result[-1]["text"])
         ):
             result[-1] = {
@@ -282,18 +305,25 @@ def chunk_segments(segments: list[dict], max_chars: int = 4900) -> list[list[dic
             # Hard-split the oversized segment at sentence boundaries
             sentences = re.split(r"(?<=[.!?])\s+", seg["text"])
             buf = ""
+
+            def _split_piece(text: str) -> dict:
+                piece = {"type": seg["type"], "text": text}
+                if "level" in seg:
+                    piece["level"] = seg["level"]
+                return piece
+
             for sent in sentences:
                 if len(buf) + len(sent) + 1 <= max_chars:
                     buf = (buf + " " + sent).strip()
                 else:
                     if buf:
-                        chunks.append([{"type": seg["type"], "text": buf}])
+                        chunks.append([_split_piece(buf)])
                     while len(sent) > max_chars:
-                        chunks.append([{"type": seg["type"], "text": sent[:max_chars]}])
+                        chunks.append([_split_piece(sent[:max_chars])])
                         sent = sent[max_chars:]
                     buf = sent
             if buf:
-                chunks.append([{"type": seg["type"], "text": buf}])
+                chunks.append([_split_piece(buf)])
 
         elif current_len + seg_len + 1 > max_chars:
             chunks.append(current)
@@ -307,6 +337,76 @@ def chunk_segments(segments: list[dict], max_chars: int = 4900) -> list[list[dic
         chunks.append(current)
 
     return chunks
+
+
+def is_scene_break(text: str) -> bool:
+    """True if text is a standalone scene-break marker ("***", "* * *", "###", ...)."""
+    return bool(SCENE_BREAK_RE.match(text.strip()))
+
+
+def _heading_prosody(level: int | None) -> tuple[str, int]:
+    """Return (pitch string, rate-delta-percent) for a heading of the given level."""
+    lvl = level or 1
+    hz  = _HEADING_PITCH_HZ.get(lvl, _DEFAULT_HEADING_PITCH_HZ)
+    pct = _HEADING_RATE_PCT.get(lvl, _DEFAULT_HEADING_RATE_PCT)
+    return f"+{hz}Hz", pct
+
+
+def _combine_rate(base_rate: str, delta_pct: int) -> str:
+    """Apply a percentage-point delta on top of a '+N%'/'-N%' base rate string."""
+    m = re.match(r"^([+-])(\d+)%$", base_rate)
+    if not m:
+        return base_rate
+    value = int(m.group(2)) if m.group(1) == "+" else -int(m.group(2))
+    value += delta_pct
+    return f"{'+' if value >= 0 else '-'}{abs(value)}%"
+
+
+def plan_audio_pieces(segments: list[dict], base_rate: str) -> list[dict]:
+    """
+    Turn a list of segments into an ordered list of audio "pieces" for
+    per-segment synthesis + silence-splicing:
+      {"kind": "tts", "text": ..., "pitch": ..., "rate": ...}
+      {"kind": "silence", "ms": ...}
+
+    Heading levels get progressively more pitch/rate emphasis and longer
+    surrounding pauses (level 1 = strongest), so headings and sub-headings
+    become audibly distinguishable. Scene-break markers ("***" etc.) become
+    a single longer silence with no spoken text.
+    """
+    pieces: list[dict] = []
+    prev_kind: str | None = None   # "heading" | "paragraph" | "scene_break"
+
+    for seg in segments:
+        text = replace_dashes_for_tts(seg["text"].strip())
+        if not text:
+            continue
+
+        if seg["type"] == SEG_HEADING:
+            level = seg.get("level")
+            if prev_kind is not None:
+                ms = _PAUSE_BEFORE_HEADING_MS.get(level or 1, _DEFAULT_PAUSE_BEFORE_HEADING_MS)
+                pieces.append({"kind": "silence", "ms": ms})
+            pitch, rate_delta = _heading_prosody(level)
+            pieces.append({
+                "kind": "tts", "text": text,
+                "pitch": pitch, "rate": _combine_rate(base_rate, rate_delta),
+            })
+            ms = _PAUSE_AFTER_HEADING_MS.get(level or 1, _DEFAULT_PAUSE_AFTER_HEADING_MS)
+            pieces.append({"kind": "silence", "ms": ms})
+            prev_kind = "heading"
+
+        elif is_scene_break(text):
+            pieces.append({"kind": "silence", "ms": _PAUSE_SCENE_BREAK_MS})
+            prev_kind = "scene_break"
+
+        else:
+            if prev_kind == "paragraph":
+                pieces.append({"kind": "silence", "ms": _PAUSE_PARAGRAPH_MS})
+            pieces.append({"kind": "tts", "text": text, "pitch": "+0Hz", "rate": base_rate})
+            prev_kind = "paragraph"
+
+    return pieces
 
 
 # ---------------------------------------------------------------------------
@@ -324,8 +424,11 @@ def html_to_segments(html_bytes: bytes) -> list[dict]:
         text = sanitize_text(element.get_text(" ", strip=True))
         if not text:
             continue
-        seg_type = SEG_HEADING if element.name in HEADING_TAGS else SEG_PARAGRAPH
-        segments.append({"type": seg_type, "text": text})
+        is_hdg = element.name in HEADING_TAGS
+        seg: dict = {"type": SEG_HEADING if is_hdg else SEG_PARAGRAPH, "text": text}
+        if is_hdg:
+            seg["level"] = int(element.name[1])   # h1..h6 → 1..6
+        segments.append(seg)
 
     # Fallback: no recognised tags → treat full text as one paragraph
     if not segments:
@@ -711,8 +814,11 @@ class EpubConverter:
             print(f"  📝  Vorverarbeitete Datei gespeichert: {pre_path.name}")
 
         HEADING_RE = re.compile(
-            r"(?m)^(?:Kapitel|Chapter|Teil|Part|Abschnitt|Section|Epilog|Prolog|Vorwort|Nachwort)\s+\S.*$"
+            r"(?m)^(?P<kw>Kapitel|Chapter|Teil|Part|Abschnitt|Section|Epilog|Prolog|Vorwort|Nachwort)\s+\S.*$"
         )
+        # "Abschnitt"/"Section" reads as a sub-heading within a chapter; everything
+        # else (Teil/Part, Kapitel/Chapter, Epilog/Prolog/Vorwort/Nachwort) is level 1.
+        TXT_HEADING_LEVEL = {"abschnitt": 2, "section": 2}
 
         # Build flat list of segments, marking headings
         segments_raw: list[dict] = []
@@ -728,7 +834,8 @@ class EpubConverter:
             # The heading line
             heading_text = sanitize_text(m.group(0))
             if heading_text:
-                segments_raw.append({"type": SEG_HEADING, "text": heading_text})
+                level = TXT_HEADING_LEVEL.get(m.group("kw").lower(), 1)
+                segments_raw.append({"type": SEG_HEADING, "text": heading_text, "level": level})
             last_end = m.end()
 
         # Remaining text after the last heading
@@ -822,17 +929,24 @@ class EpubConverter:
         title = self._clean_title(raw) or self.epub_path.stem
 
         CHAPTER_STYLES = {"heading 1", "überschrift 1", "titre 1", "título 1"}
+        HEADING_LEVEL_RE = re.compile(r"(\d+)\s*$")
 
         # Build flat segment list – walk body + table cells in document order
         segments_raw: list[dict] = []
+        heading_styles_seen: set[str] = set()
         for para in _docx_iter_paragraphs(doc):
             text = sanitize_text(para.text)
             if not text:
                 continue
-            style  = para.style.name if para.style else ""
-            is_hdg = "heading" in style.lower() or "überschrift" in style.lower()
-            seg_type = SEG_HEADING if is_hdg else SEG_PARAGRAPH
-            segments_raw.append({"type": seg_type, "text": text})
+            style_lower = para.style.name.lower() if para.style else ""
+            is_hdg = "heading" in style_lower or "überschrift" in style_lower
+            seg: dict = {"type": SEG_HEADING if is_hdg else SEG_PARAGRAPH, "text": text}
+            if is_hdg:
+                m = HEADING_LEVEL_RE.search(style_lower)
+                seg["level"] = int(m.group(1)) if m else 1
+                seg["_chapter_boundary_style"] = style_lower
+                heading_styles_seen.add(style_lower)
+            segments_raw.append(seg)
 
         if not segments_raw:
             return [], title
@@ -840,7 +954,14 @@ class EpubConverter:
         # Merge consecutive paragraphs that end mid-sentence (no trailing punctuation)
         segments_raw = merge_incomplete_segments(segments_raw)
 
-        # Group flat segments into logical chapters (split at heading boundaries)
+        # A chapter boundary is a "Heading 1"-equivalent style, so that H2+
+        # sub-headings stay *inside* their chapter (audibly distinguished via
+        # pitch/rate/pause instead of splitting into their own file). Falls
+        # back to "any heading" for documents that don't use that convention
+        # at all (e.g. only "Heading 2" is used throughout).
+        chapter_boundary_styles = heading_styles_seen & CHAPTER_STYLES or heading_styles_seen
+
+        # Group flat segments into logical chapters (split at chapter-boundary headings)
         chapters: list[dict] = []
         current:  list[dict] = []
 
@@ -860,7 +981,10 @@ class EpubConverter:
             chapters.append({"title": ch_title, "segments": segs})
 
         for seg in segments_raw:
-            if seg["type"] == SEG_HEADING and current:
+            is_boundary = seg["type"] == SEG_HEADING and (
+                seg.pop("_chapter_boundary_style", None) in chapter_boundary_styles
+            )
+            if is_boundary and current:
                 _flush(current)
                 current = [seg]
             else:
@@ -1068,16 +1192,20 @@ class EpubConverter:
             await self._synthesise_chunk_edge(segments, out_path, log=log)
 
     # ------------------------------------------------------------------
-    async def _synthesise_chunk_edge(
+    async def _synthesise_chunk_edge_legacy(
         self, segments: list[dict], out_path: Path,
         log: "HtmlLog | None" = None,
     ) -> None:
         """
-        Synthesise a segment chunk to MP3 via Edge TTS.
+        Synthesise a segment chunk to MP3 via Edge TTS in a single request.
         Primary:  punctuation-based prosodic pauses (Option 1).
         Fallback: spoken placeholder sentences (Option 3) if synthesis fails.
         Retries up to 3 times on network/server errors with exponential backoff (2 s, 4 s).
         Raises TtsServerError only after all retries are exhausted.
+
+        Used when ffmpeg is not installed (the pause-splicing path in
+        _synthesise_chunk_edge requires ffmpeg to generate silence and
+        stitch per-segment audio together).
         """
         MAX_RETRIES = 3
         BASE_DELAY  = 2.0   # seconds; doubles each attempt
@@ -1131,6 +1259,130 @@ class EpubConverter:
                 await asyncio.sleep(delay)
             else:
                 raise TtsServerError(str(last_network_exc)) from last_network_exc
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _get_silence_clip(ms: int) -> Path:
+        """
+        Return a cached silent MP3 of the given duration (24 kHz mono,
+        matching Edge TTS's output format so ffmpeg concat -c copy stays clean).
+        Generated once via ffmpeg and reused across all conversions.
+        """
+        cache_dir = Path(tempfile.gettempdir()) / "epub_to_voice_silence"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        path = cache_dir / f"silence_{ms}ms.mp3"
+        if path.exists() and path.stat().st_size > 0:
+            return path
+
+        ffmpeg = EpubConverter._ffmpeg_path()
+        subprocess.run(
+            [
+                ffmpeg, "-y", "-f", "lavfi",
+                "-i", "anullsrc=channel_layout=mono:sample_rate=24000",
+                "-t", f"{max(ms, 1) / 1000:.3f}",
+                "-c:a", "libmp3lame", "-b:a", "48k",
+                str(path),
+            ],
+            capture_output=True,
+        )
+        return path
+
+    # ------------------------------------------------------------------
+    async def _synthesise_piece_edge(
+        self, text: str, pitch: str, rate: str, out_path: Path,
+        log: "HtmlLog | None" = None,
+    ) -> None:
+        """
+        Synthesise one short text piece to MP3 via Edge TTS.
+        Retries up to 3 times on network/server errors (2 s / 4 s backoff),
+        then falls back once to a short placeholder sentence (Option 3)
+        on non-network errors before giving up.
+        """
+        MAX_RETRIES = 3
+        BASE_DELAY  = 2.0
+
+        def _warn(msg: str) -> None:
+            if log:
+                log.log(msg, "warn")
+            else:
+                print(msg)
+
+        current_text  = text
+        used_fallback = False
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                communicate = edge_tts.Communicate(
+                    current_text, self.voice, rate=rate, volume=self.volume, pitch=pitch,
+                )
+                await communicate.save(str(out_path))
+                if out_path.exists() and out_path.stat().st_size < 512:
+                    out_path.unlink()
+                    raise RuntimeError("Edge-TTS lieferte eine leere/korrupte Datei.")
+                return  # success
+            except Exception as exc:
+                if self._is_network_error(exc):
+                    if attempt < MAX_RETRIES:
+                        delay = BASE_DELAY * (2 ** (attempt - 1))
+                        _warn(f"  ↻  Server nicht erreichbar – Versuch {attempt}/{MAX_RETRIES}, warte {delay:.0f} s …")
+                        await asyncio.sleep(delay)
+                        continue
+                    raise TtsServerError(str(exc)) from exc
+                if not used_fallback:
+                    _warn(f"  ⚠  Segment-Synthese fehlgeschlagen ({exc}) – wechsle zu Platzhaltertext …")
+                    current_text  = "Weiter."
+                    used_fallback = True
+                    continue
+                raise RuntimeError(
+                    f"Edge-TTS: Auch Platzhaltertext fehlgeschlagen: {exc}"
+                ) from exc
+
+    # ------------------------------------------------------------------
+    async def _synthesise_chunk_edge(
+        self, segments: list[dict], out_path: Path,
+        log: "HtmlLog | None" = None,
+    ) -> None:
+        """
+        Synthesise a segment chunk to MP3 via Edge TTS.
+
+        Each segment (heading / paragraph / scene-break) is synthesised
+        individually with a heading-level-aware pitch/rate, then spliced
+        together with real silence gaps (ffmpeg) so headings/sub-headings
+        are audibly distinguishable and pauses have exact, natural durations
+        (edge-tts XML-escapes in-band SSML/break tags, so this is the only
+        way to get controllable pauses - see plan_audio_pieces()).
+
+        Falls back to a single combined request without per-level
+        differentiation (_synthesise_chunk_edge_legacy) if ffmpeg is not
+        installed.
+        """
+        if not self._ffmpeg_path():
+            await self._synthesise_chunk_edge_legacy(segments, out_path, log=log)
+            return
+
+        pieces = plan_audio_pieces(segments, self.rate)
+        tts_pieces = [p for p in pieces if p["kind"] == "tts"]
+        if not tts_pieces:
+            return
+
+        tmp_dir = out_path.parent / f".tmp_{out_path.stem}"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            part_paths: list[Path] = []
+            for idx, piece in enumerate(pieces):
+                if piece["kind"] == "silence":
+                    part_paths.append(self._get_silence_clip(piece["ms"]))
+                else:
+                    part_path = tmp_dir / f"{idx:04d}.mp3"
+                    await self._synthesise_piece_edge(
+                        piece["text"], piece["pitch"], piece["rate"], part_path, log=log,
+                    )
+                    part_paths.append(part_path)
+                    await asyncio.sleep(0.15)   # be gentle with the service between calls
+
+            if not self._concat_mp3_ffmpeg(part_paths, out_path):
+                raise RuntimeError("Zusammenfügen der Segment-Audios via ffmpeg fehlgeschlagen.")
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     # ------------------------------------------------------------------
     async def convert(self) -> None:
@@ -1326,19 +1578,15 @@ class EpubConverter:
         if self.normalize_volume and produced:
             if self._ffmpeg_path():
                 msg = f"🔊  Normalisiere Lautstärke von {len(produced)} Datei(en) … "
-                log.log(msg, "info")
                 print(msg, end="", flush=True)
                 ok_count = sum(1 for part in produced if self._normalize_mp3_loudness(part))
-                log.log(f"✓ {ok_count}/{len(produced)} normalisiert.", "ok")
-                print("✓")
+                log.log(f"{msg}✓ {ok_count}/{len(produced)} normalisiert.", "ok")
             else:
                 log.log("⚠  ffmpeg nicht gefunden – Lautstärke-Normalisierung übersprungen.", "warn")
-                print("⚠  ffmpeg nicht gefunden – Lautstärke-Normalisierung übersprungen.")
 
         if self.merge and produced:
             merged = self.output_dir / f"{safe_book}{self._audio_ext}"
             msg = f"🔗  Zusammenführen von {len(produced)} Datei(en) → {merged.name} … "
-            log.log(msg, "info")
             print(msg, end="", flush=True)
             if not self._concat_mp3_ffmpeg(produced, merged):
                 # Fallback: naive byte-concatenation (works for consecutive MP3 frames,
@@ -1348,8 +1596,7 @@ class EpubConverter:
                         fout.write(part.read_bytes())
             for part in produced:
                 part.unlink(missing_ok=True)
-            log.log("✓ Zusammengeführt.", "ok")
-            print("✓")
+            log.log(f"{msg}✓ Zusammengeführt.", "ok")
 
         done_msg = f"✅  Fertig! {len(produced)}/{total} Splits. Ausgabe: {self.output_dir}"
         log.log(done_msg, "ok")
