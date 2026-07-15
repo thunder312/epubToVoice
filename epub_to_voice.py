@@ -123,73 +123,107 @@ def sanitize_text(text: str) -> str:
     return text
 
 
-def clean_linebreaks(content: str) -> str:
-    """
-    Preprocess raw text: remove line breaks that are mid-sentence.
-    Keeps newlines only after sentence-ending punctuation (. , ! ? : ;).
-    Also merges consecutive paragraph blocks (double-newline separated)
-    when the preceding block does not end with such punctuation.
-    """
-    content = content.replace("\r\n", "\n").replace("\r", "\n")
-
-    PUNCT_END = re.compile(r"[.!?:;,]\s*$")
-
-    # Step 1: Within each paragraph block, join lines that don't end with punctuation
-    para_blocks = re.split(r"\n{2,}", content)
-    cleaned_blocks: list[str] = []
-    for block in para_blocks:
-        lines = block.split("\n")
-        merged: list[str] = []
-        for line in lines:
-            if not merged:
-                merged.append(line)
-            elif not merged[-1].strip():
-                merged.append(line)
-            elif PUNCT_END.search(merged[-1]):
-                merged.append(line)
-            else:
-                merged[-1] = merged[-1].rstrip() + " " + line.lstrip()
-        cleaned_blocks.append("\n".join(merged).strip())
-
-    # Step 2: Merge paragraph blocks where the preceding block doesn't end with punctuation
-    result: list[str] = []
-    for block in cleaned_blocks:
-        if not block:
-            continue
-        if result and not PUNCT_END.search(result[-1]):
-            result[-1] = result[-1].rstrip() + " " + block
-        else:
-            result.append(block)
-
-    return "\n\n".join(result)
+# ---------------------------------------------------------------------------
+# Edge-TTS dialogue/pause preprocessing
+# ---------------------------------------------------------------------------
+# edge-tts synthesises each paragraph break in the extracted text as its own
+# call (see plan_audio_pieces), which always gets a hard splice pause - even
+# mid-dialogue or mid-sentence, where the source text never got a real
+# terminal punctuation mark. A closing dialogue quote (") does NOT by itself
+# count as a real sentence end below, since German dialogue lines almost
+# always end in one and would otherwise never merge with the next line.
+_EDGE_TTS_SENTENCE_END_RE   = re.compile(r"[.!?…—]\s*$")
+_EDGE_TTS_DIALOGUE_COMMA_RE = re.compile(r"“,$", re.MULTILINE)  # “,  ->  “
+_EDGE_TTS_CHAPTER_RE        = re.compile(r"^Kapitel\b")
+_EDGE_TTS_SHORT_PARA_LEN    = 8   # paragraphs shorter than this always merge back
 
 
 def merge_incomplete_segments(segments: list[dict]) -> list[dict]:
     """
     Merge consecutive SEG_PARAGRAPH segments where the preceding segment
-    does not end with sentence-ending punctuation (. , ! ? : ;).
-    Heading segments and scene-break markers ("***" etc.) are always kept
-    as-is and act as merge barriers.
-    This removes unwanted TTS pauses caused by mid-sentence paragraph breaks.
+    does not end in a real sentence boundary (. ! ? … —), or where the
+    current segment is a very short fragment (edge-tts drops/glitches on
+    mini-segments). Heading segments and scene-break markers ("***" etc.)
+    are always kept as-is and act as merge barriers.
+    This removes unwanted TTS pauses caused by mid-sentence/mid-dialogue
+    paragraph breaks - e.g. EPUB markup that puts each dialogue line in its
+    own <p> tag.
     """
-    PUNCT_END = re.compile(r"[.!?:;,]\s*$")
     result: list[dict] = []
     for seg in segments:
-        if (
+        text = _EDGE_TTS_DIALOGUE_COMMA_RE.sub("“", seg["text"])
+        mergeable = (
             seg["type"] == SEG_PARAGRAPH
-            and not is_scene_break(seg["text"])
+            and not is_scene_break(text)
             and result
             and result[-1]["type"] == SEG_PARAGRAPH
             and not is_scene_break(result[-1]["text"])
-            and not PUNCT_END.search(result[-1]["text"])
-        ):
+            and (
+                len(text) < _EDGE_TTS_SHORT_PARA_LEN
+                or not _EDGE_TTS_SENTENCE_END_RE.search(result[-1]["text"])
+            )
+        )
+        if mergeable:
             result[-1] = {
                 "type": SEG_PARAGRAPH,
-                "text": result[-1]["text"].rstrip() + " " + seg["text"].lstrip(),
+                "text": result[-1]["text"].rstrip() + " " + text.lstrip(),
             }
         else:
-            result.append(dict(seg))
+            new_seg = dict(seg)
+            new_seg["text"] = text
+            result.append(new_seg)
     return result
+
+
+def prepare_text_for_edge_tts(text: str) -> str:
+    """
+    Preprocess extracted text before handing it to edge-tts so paragraph
+    breaks only produce a spoken pause where the text actually ends a
+    sentence or dialogue line - not mid-dialogue or mid-sentence.
+
+    - Paragraphs not ending in . ! ? … — are joined to the next paragraph
+      with a single space.
+    - Paragraphs ending in one of those are kept as their own line (natural
+      speaking pause).
+    - Paragraphs shorter than 8 characters always merge into the previous
+      one (edge-tts drops/glitches on mini-segments).
+    - "Kapitel ..." headings get a blank line before and after.
+    - Stylistic trailing commas after a closing dialogue quote are removed,
+      e.g. „Nein, Mylord.",  ->  „Nein, Mylord."
+    """
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = _EDGE_TTS_DIALOGUE_COMMA_RE.sub("“", text)
+
+    paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
+
+    blocks: list[str] = []
+    for para in paragraphs:
+        is_barrier = bool(_EDGE_TTS_CHAPTER_RE.match(para)) or is_scene_break(para)
+        if not blocks:
+            blocks.append(para)
+            continue
+
+        prev = blocks[-1]
+        prev_is_barrier = bool(_EDGE_TTS_CHAPTER_RE.match(prev)) or is_scene_break(prev)
+        if is_barrier or prev_is_barrier:
+            blocks.append(para)
+        elif len(para) < _EDGE_TTS_SHORT_PARA_LEN or not _EDGE_TTS_SENTENCE_END_RE.search(prev):
+            blocks[-1] = prev.rstrip() + " " + para
+        else:
+            blocks.append(para)
+
+    # Blocks that keep their own "line break" become real paragraphs
+    # (separated by a blank line), which downstream parsing (\n{2,}-split)
+    # turns back into individual TTS segments with a natural pause between
+    # them - as opposed to merged blocks, which share one segment/API call.
+    out_parts: list[str] = [blocks[0]] if blocks else []
+    for i in range(1, len(blocks)):
+        is_heading      = bool(_EDGE_TTS_CHAPTER_RE.match(blocks[i]))
+        prev_is_heading = bool(_EDGE_TTS_CHAPTER_RE.match(blocks[i - 1]))
+        out_parts.append("\n\n\n" if (is_heading or prev_is_heading) else "\n\n")
+        out_parts.append(blocks[i])
+
+    return "".join(out_parts)
 
 
 def is_toc_title(title: str) -> bool:
@@ -666,6 +700,12 @@ class EpubConverter:
             if not segments:
                 continue
 
+            # Merge consecutive paragraphs that don't end in a real sentence
+            # boundary (e.g. each dialogue line is often its own <p> tag in
+            # EPUB markup) so they share one edge-tts call/pause instead of
+            # each getting a hard paragraph-splice pause.
+            segments = merge_incomplete_segments(segments)
+
             plain = segments_to_plain_text(segments)
             if len(plain) < self.skip_short:
                 continue
@@ -801,9 +841,9 @@ class EpubConverter:
         raw_title = self._clean_title(self.epub_path.stem) or self.epub_path.stem
         content   = self.epub_path.read_text(encoding="utf-8", errors="replace")
 
-        # Remove mid-sentence line breaks so each paragraph is a clean,
-        # uninterrupted unit of text (avoids unwanted TTS pauses).
-        content = clean_linebreaks(content)
+        # Remove mid-sentence/mid-dialogue line breaks so each paragraph is
+        # a clean, uninterrupted unit of text (avoids unwanted TTS pauses).
+        content = prepare_text_for_edge_tts(content)
 
         # Optionally save the preprocessed file next to the original.
         if self.translate_to:
