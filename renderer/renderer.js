@@ -9,6 +9,7 @@ let stopRequested = false;
 let currentJobId  = null;
 let unsubscribeProgress = null;
 let allVoices   = [];     // full list loaded at startup (for language-based filtering)
+let demoAudio   = null;   // currently playing voice-demo Audio, if any
 
 const settings = {
   outputDir:   '',
@@ -130,6 +131,42 @@ async function loadVoices() {
   voiceInput.addEventListener('click', () => voiceInput.select());
 
   renderQuickPicks();
+}
+
+// ---------------------------------------------------------------------------
+// Voice demo (bundled demo book, both TTS engines)
+// ---------------------------------------------------------------------------
+async function playVoiceDemo() {
+  const engine = settings.ttsEngine;
+  if (engine === 'edge' && !settings.voice) return;
+
+  if (demoAudio) { demoAudio.pause(); demoAudio = null; }
+
+  const btn = $(engine === 'piper' ? 'btnDemoVoicePiper' : 'btnDemoVoice');
+  demoStatus.textContent = '⏳ Stimme wird generiert…';
+  demoStatus.className   = 'demo-status loading';
+  btn.disabled = true;
+
+  const result = await window.api.demoVoice({
+    ttsEngine:  engine,
+    voice:      settings.voice,
+    piperVoice: settings.piperVoice,
+    rate:       settings.rate,
+    volume:     settings.volume,
+  });
+  btn.disabled = false;
+
+  if (result.error) {
+    demoStatus.textContent = '✗ ' + result.error;
+    demoStatus.className   = 'demo-status error';
+    return;
+  }
+
+  demoStatus.textContent = '▶ Spielt ab…';
+  demoStatus.className   = 'demo-status';
+  demoAudio = new Audio(`data:audio/mpeg;base64,${result.base64}`);
+  demoAudio.play();
+  demoAudio.onended = () => { demoStatus.textContent = ''; demoAudio = null; };
 }
 
 // ---------------------------------------------------------------------------
@@ -479,33 +516,9 @@ function bindEvents() {
     if (!isConverting) { queue = []; renderQueue(); }
   });
 
-  // Voice demo
-  let demoAudio = null;
-  $('btnDemoVoice').addEventListener('click', async () => {
-    const voice = voiceInput.value.trim();
-    if (!voice) return;
-
-    if (demoAudio) { demoAudio.pause(); demoAudio = null; }
-
-    demoStatus.textContent = '⏳ Stimme wird generiert…';
-    demoStatus.className   = 'demo-status loading';
-    $('btnDemoVoice').disabled = true;
-
-    const result = await window.api.demoVoice(voice, settings.rate, settings.volume);
-    $('btnDemoVoice').disabled = false;
-
-    if (result.error) {
-      demoStatus.textContent = '✗ ' + result.error;
-      demoStatus.className   = 'demo-status error';
-      return;
-    }
-
-    demoStatus.textContent = '▶ Spielt ab…';
-    demoStatus.className   = 'demo-status';
-    demoAudio = new Audio(`data:audio/mpeg;base64,${result.base64}`);
-    demoAudio.play();
-    demoAudio.onended = () => { demoStatus.textContent = ''; demoAudio = null; };
-  });
+  // Voice demo (both engines)
+  $('btnDemoVoice').addEventListener('click', playVoiceDemo);
+  $('btnDemoVoicePiper').addEventListener('click', playVoiceDemo);
 
   // Voice/speed templates
   $('templateSelect').addEventListener('change', () => {
@@ -515,28 +528,21 @@ function bindEvents() {
     const t = loadTemplates().find(t => t.id === id);
     if (t) applyTemplate(t);
   });
-  $('btnSaveTemplate').addEventListener('click', () => {
-    const name = window.prompt('Name für diese Vorlage:');
-    if (!name || !name.trim()) return;
-    const list = loadTemplates();
-    const t = {
-      id:         crypto.randomUUID(),
-      name:       name.trim(),
-      ttsEngine:  settings.ttsEngine,
-      voice:      settings.voice,
-      piperVoice: settings.piperVoice,
-      rate:       settings.rate,
-      volume:     settings.volume,
-    };
-    list.push(t);
-    saveTemplates(list);
-    renderTemplateOptions(t.id);
+  $('btnSaveTemplate').addEventListener('click', openTemplateNameModal);
+  $('templateNameClose').addEventListener('click', closeTemplateNameModal);
+  $('templateNameCancel').addEventListener('click', closeTemplateNameModal);
+  $('templateNameSave').addEventListener('click', saveTemplateFromModal);
+  $('templateNameInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter')  saveTemplateFromModal();
+    if (e.key === 'Escape') closeTemplateNameModal();
   });
+  $('templateNameModal').addEventListener('click', e => {
+    if (e.target === $('templateNameModal')) closeTemplateNameModal();
+  });
+
   $('btnDeleteTemplate').addEventListener('click', () => {
     const id = $('templateSelect').value;
     if (!id) return;
-    const t = loadTemplates().find(t => t.id === id);
-    if (!t || !window.confirm(`Vorlage "${t.name}" löschen?`)) return;
     saveTemplates(loadTemplates().filter(t => t.id !== id));
     renderTemplateOptions();
   });
@@ -567,6 +573,38 @@ function renderTemplateOptions(selectedId = '') {
     list.map(t => `<option value="${escHtml(t.id)}">${escHtml(t.name)}</option>`).join('');
   select.value = selectedId;
   $('btnDeleteTemplate').disabled = !selectedId;
+}
+
+// Electron doesn't implement window.prompt() (it silently returns null with
+// no dialog shown), so naming a template uses this small in-app modal instead.
+function openTemplateNameModal() {
+  $('templateNameInput').value = '';
+  $('templateNameModal').style.display = 'flex';
+  $('templateNameInput').focus();
+}
+
+function closeTemplateNameModal() {
+  $('templateNameModal').style.display = 'none';
+}
+
+function saveTemplateFromModal() {
+  const name = $('templateNameInput').value.trim();
+  if (!name) { $('templateNameInput').focus(); return; }
+
+  const list = loadTemplates();
+  const t = {
+    id:         crypto.randomUUID(),
+    name,
+    ttsEngine:  settings.ttsEngine,
+    voice:      settings.voice,
+    piperVoice: settings.piperVoice,
+    rate:       settings.rate,
+    volume:     settings.volume,
+  };
+  list.push(t);
+  saveTemplates(list);
+  renderTemplateOptions(t.id);
+  closeTemplateNameModal();
 }
 
 function applyTemplate(t) {

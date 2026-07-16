@@ -22,7 +22,8 @@
     "copyright": "Copyright © 2025",
     "extraResources": [
       { "from": "epub_to_voice.py", "to": "epub_to_voice.py" },
-      { "from": "requirements.txt", "to": "requirements.txt" }
+      { "from": "requirements.txt", "to": "requirements.txt" },
+      { "from": "demo_text.txt", "to": "demo_text.txt" }
     ],
     "win": {
       "target": [

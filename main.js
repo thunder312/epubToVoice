@@ -53,6 +53,13 @@ function getScriptPath() {
     : path.join(__dirname, 'epub_to_voice.py');
 }
 
+/** Path to the bundled multi-paragraph demo book – works both in dev and packaged. */
+function getDemoTextPath() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'demo_text.txt')
+    : path.join(__dirname, 'demo_text.txt');
+}
+
 /** Try to find a working python executable. */
 async function detectPython() {
   for (const cmd of ['python', 'python3', 'py']) {
@@ -314,27 +321,30 @@ ipcMain.handle('detect-language', async (event, filePath) => {
 
 const activeJobs = new Map(); // jobId → ChildProcess
 
-ipcMain.handle('demo-voice', async (event, { voice, rate, volume }) => {
+ipcMain.handle('demo-voice', async (event, { ttsEngine, voice, rate, volume, piperVoice }) => {
   const cmd = await getPython();
   if (!cmd) return { error: 'Python nicht gefunden' };
 
-  const demoScript = path.join(app.getPath('temp'), 'etv_demo.py');
-  const demoMp3    = path.join(app.getPath('temp'), 'etv_demo.mp3');
+  // Reuse the real conversion pipeline (incl. pause-splicing) on the bundled
+  // demo book, instead of a bespoke one-off synthesis path per engine.
+  const demoDir = path.join(app.getPath('temp'), 'etv_demo');
+  fs.rmSync(demoDir, { recursive: true, force: true });
+  fs.mkdirSync(demoDir, { recursive: true });
+  const demoTxt = path.join(demoDir, 'demo.txt');
+  fs.copyFileSync(getDemoTextPath(), demoTxt);
 
-  fs.writeFileSync(demoScript, [
-    'import asyncio, edge_tts, sys',
-    'if sys.platform == "win32":',
-    '    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())',
-    'TEXT = "Willkommen! Dies ist eine Hörprobe deiner gewählten Stimme. Ich lese Bücher vor – klar, natürlich und angenehm."',
-    'async def run():',
-    '    voice, rate, volume = sys.argv[1], sys.argv[2], sys.argv[3]',
-    '    comm = edge_tts.Communicate(TEXT, voice, rate=rate, volume=volume)',
-    '    await comm.save(sys.argv[4])',
-    'asyncio.run(run())',
-  ].join('\n'));
+  const args = [getScriptPath(), demoTxt, '-o', demoDir, '--merge', '--skip-short=0'];
+  if (rate)                                args.push(`--rate=${rate}`);
+  if (volume)                              args.push(`--volume=${volume}`);
+  if (ttsEngine === 'piper') {
+    args.push('--tts-engine=piper');
+    if (piperVoice) args.push(`--piper-voice=${piperVoice}`);
+  } else if (voice) {
+    args.push('-v', voice);
+  }
 
   return new Promise(resolve => {
-    const proc = spawn(cmd, [demoScript, voice, rate, volume, demoMp3], {
+    const proc = spawn(cmd, args, {
       shell: false,
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
     });
@@ -343,7 +353,9 @@ ipcMain.handle('demo-voice', async (event, { voice, rate, volume }) => {
     proc.on('close', code => {
       if (code !== 0) { resolve({ error: err || 'Demo fehlgeschlagen' }); return; }
       try {
-        const b64 = fs.readFileSync(demoMp3).toString('base64');
+        const mp3Name = fs.readdirSync(demoDir).find(f => f.toLowerCase().endsWith('.mp3'));
+        if (!mp3Name) { resolve({ error: 'Demo-Audio wurde nicht erzeugt.' }); return; }
+        const b64 = fs.readFileSync(path.join(demoDir, mp3Name)).toString('base64');
         resolve({ base64: b64 });
       } catch (e) {
         resolve({ error: e.message });

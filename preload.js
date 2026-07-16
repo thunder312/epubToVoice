@@ -33,8 +33,8 @@ contextBridge.exposeInMainWorld('api', {
   // Language detection
   detectLanguage: filePath => ipcRenderer.invoke('detect-language', filePath),
 
-  // Voice demo
-  demoVoice: (voice, rate, volume) => ipcRenderer.invoke('demo-voice', { voice, rate, volume }),
+  // Voice demo (both engines; reads the bundled demo book)
+  demoVoice: opts => ipcRenderer.invoke('demo-voice', opts),
 
   // Conversion
   startConversion: opts   => ipcRenderer.invoke('start-conversion', opts),

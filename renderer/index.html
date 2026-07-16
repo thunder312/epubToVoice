@@ -137,21 +137,25 @@
               <datalist id="voiceDatalist"></datalist>
               <div id="voiceCount" class="voice-count" style="display:none"></div>
               <div id="voiceQuickPicks" class="voice-quickpick" style="display:none"></div>
-              <div id="demoStatus" class="demo-status"></div>
               <div id="langSuggest" class="lang-suggest" style="display:none"></div>
             </div>
 
             <!-- Piper TTS voice picker -->
             <div id="piperVoicePanel" style="display:none">
               <label class="field-label">Piper-Stimme</label>
-              <input type="text" id="piperVoiceInput" class="input"
-                     value="de_DE-thorsten-high"
-                     placeholder="z. B. de_DE-thorsten-high oder en_US-amy-medium">
+              <div class="voice-row">
+                <input type="text" id="piperVoiceInput" class="input"
+                       value="de_DE-thorsten-high"
+                       placeholder="z. B. de_DE-thorsten-high oder en_US-amy-medium">
+                <button class="btn btn--icon" id="btnDemoVoicePiper" title="Stimme anhören">▶</button>
+              </div>
               <div class="piper-hint">
                 Stimmen werden beim ersten Start automatisch heruntergeladen.<br>
                 Verfügbare Stimmen: <a href="#" id="piperVoicesLink">HuggingFace / rhasspy/piper-voices</a>
               </div>
             </div>
+
+            <div id="demoStatus" class="demo-status"></div>
 
             <label class="field-label">
               Geschwindigkeit&ensp;<span id="rateDisplay" class="value-display">-10%</span>
@@ -225,6 +229,28 @@
     <div class="modal-footer">
       <button id="modalCancel" class="btn btn--secondary">Abbrechen</button>
       <button id="modalApply"  class="btn btn--primary">Übernehmen</button>
+    </div>
+
+  </div>
+</div>
+
+<!-- ── Template-Name Modal ────────────────────────────────────── -->
+<div id="templateNameModal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true">
+  <div class="modal-card modal-card--sm">
+
+    <div class="modal-header">
+      <span class="modal-title">Vorlage speichern</span>
+      <button id="templateNameClose" class="modal-close" title="Schließen">✕</button>
+    </div>
+
+    <div class="modal-body">
+      <label class="field-label" style="margin-top:0">Name der Vorlage</label>
+      <input type="text" id="templateNameInput" class="input" placeholder="z. B. Hörbuch schnell" maxlength="60">
+    </div>
+
+    <div class="modal-footer">
+      <button id="templateNameCancel" class="btn btn--secondary">Abbrechen</button>
+      <button id="templateNameSave"  class="btn btn--primary">Speichern</button>
     </div>
 
   </div>
