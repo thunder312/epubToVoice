@@ -20,6 +20,7 @@ function createWindow() {
     minHeight: 600,
     backgroundColor: '#0f0f1a',
     title: 'EPUB to Voice',
+    icon: path.join(__dirname, 'renderer', 'assets', 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
