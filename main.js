@@ -355,7 +355,7 @@ ipcMain.handle('demo-voice', async (event, { voice, rate, volume }) => {
 
 ipcMain.handle('start-conversion', async (event, opts) => {
   const { jobId, epubPath, outputDir, voice, rate, volume, skipShort, maxChapters, merge, createZip,
-          startPage, endPage, skipChapters, translateTo, resume, ttsEngine, piperVoice, normalizeVolume } = opts;
+          startPage, endPage, skipChapters, translateTo, resume, ttsEngine, piperVoice, normalizeVolume, saveLog } = opts;
 
   const cmd = await getPython();
   if (!cmd) return { error: 'Python not found' };
@@ -376,6 +376,7 @@ ipcMain.handle('start-conversion', async (event, opts) => {
   if (ttsEngine && ttsEngine !== 'edge')   args.push(`--tts-engine=${ttsEngine}`);
   if (piperVoice)                          args.push(`--piper-voice=${piperVoice}`);
   if (normalizeVolume === false)           args.push('--no-normalize-volume');
+  if (saveLog)                             args.push('--save-log');
 
   return new Promise(resolve => {
     const proc = spawn(cmd, args, { shell: false, env: { ...process.env, PYTHONIOENCODING: 'utf-8' } });
@@ -388,8 +389,8 @@ ipcMain.handle('start-conversion', async (event, opts) => {
     function flush(line) {
       if (!line.trim()) return;
 
-      // Extract output path
-      const m1 = line.match(/Output:\s+(.+)/);
+      // Extract output path (printed once conversion finishes successfully)
+      const m1 = line.match(/Dateien gespeichert in:\s*(.+)/);
       if (m1) outputPath = m1[1].trim();
 
       // Extract total chapters
@@ -476,13 +477,13 @@ ipcMain.handle('open-folder', async (event, dir) => {
 
 ipcMain.handle('check-resumable', (event, filePath, customOutputDir) => {
   const parsed = path.parse(filePath);
-  const stem   = parsed.name;
-  const outDir = customOutputDir
-    ? path.join(customOutputDir, stem)
-    : path.join(parsed.dir, stem);
+  const outDir = customOutputDir || parsed.dir;
   try {
-    const files  = fs.readdirSync(outDir);
-    const audio  = files.filter(f => /\.(mp3|wav)$/i.test(f));
+    const files = fs.readdirSync(outDir);
+    // No dedicated per-book subfolder any more, so the output directory may
+    // contain audio from other files too. Only count chunk splits (NNN_NNN_…) —
+    // that naming pattern only comes from an interrupted conversion.
+    const audio = files.filter(f => /^\d{3}_\d{3}_.*\.(mp3|wav)$/i.test(f));
     return { resumable: audio.length > 0, outputDir: outDir, mp3Count: audio.length };
   } catch {
     return { resumable: false };

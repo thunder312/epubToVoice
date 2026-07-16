@@ -513,12 +513,14 @@ class HtmlLog:
     .s-ok {color:#a6e3a1} .s-err{color:#f38ba8} .s-warn{color:#fab387}
     """
 
-    def __init__(self, path: Path, title: str, meta: dict) -> None:
-        self._path   = path
-        self._f      = open(path, "w", encoding="utf-8")
-        self._start  = datetime.now()
+    def __init__(self, path: Path, title: str, meta: dict, enabled: bool = True) -> None:
+        self._path    = path
+        self._enabled = enabled
+        self._f       = open(path, "w", encoding="utf-8") if enabled else None
+        self._start   = datetime.now()
         self._counts: dict[str, int] = {"ok": 0, "error": 0, "warn": 0}
-        self._write_header(title, meta)
+        if self._enabled:
+            self._write_header(title, meta)
 
     # ------------------------------------------------------------------
     def _write_header(self, title: str, meta: dict) -> None:
@@ -550,24 +552,28 @@ class HtmlLog:
 
     # ------------------------------------------------------------------
     def log(self, msg: str, level: str = "info") -> None:
-        """Write one log line (level: info | ok | warn | error | dim | sep)."""
+        """Write one log line (level: info | ok | warn | error | dim | sep). Always mirrored to stdout."""
         ts  = self._elapsed()
         if level == "sep":
-            self._f.write(f'<tr><td colspan="2" class="sep"><hr></td></tr>\n')
+            if self._enabled:
+                self._f.write(f'<tr><td colspan="2" class="sep"><hr></td></tr>\n')
+                self._f.flush()
             print()
-            self._f.flush()
             return
 
         if level in self._counts:
             self._counts[level] += 1
 
-        safe = _html.escape(msg)
-        self._f.write(f'<tr><td class="ts">{ts}</td><td class="{level}">{safe}</td></tr>\n')
-        self._f.flush()
+        if self._enabled:
+            safe = _html.escape(msg)
+            self._f.write(f'<tr><td class="ts">{ts}</td><td class="{level}">{safe}</td></tr>\n')
+            self._f.flush()
         print(msg)
 
     # ------------------------------------------------------------------
     def close(self, total_chunks: int, produced: int) -> None:
+        if not self._enabled:
+            return
         end      = datetime.now()
         duration = str(end - self._start).split(".")[0]
         ok   = self._counts["ok"]
@@ -611,12 +617,10 @@ class EpubConverter:
         tts_engine: str = "edge",               # "edge" or "piper"
         piper_voice: str = "de_DE-thorsten-high",
         normalize_volume: bool = True,          # loudness-normalize splits via ffmpeg (best effort)
+        save_log: bool = False,                 # write the HTML Protokoll file to the output directory
     ):
         self.epub_path    = Path(epub_path)
-        self.output_dir   = (
-            Path(output_dir) if output_dir
-            else self.epub_path.parent / self.epub_path.stem
-        )
+        self.output_dir   = Path(output_dir) if output_dir else self.epub_path.parent
         self.voice         = voice
         self.rate          = rate
         self.volume        = volume
@@ -631,6 +635,7 @@ class EpubConverter:
         self.tts_engine       = tts_engine
         self.piper_voice      = piper_voice
         self.normalize_volume = normalize_volume
+        self.save_log         = save_log
         self._piper_instance  = None   # lazy-loaded
 
     @property
@@ -1519,7 +1524,7 @@ class EpubConverter:
             "Lautst.": self.volume,
             "Ausgabe": str(self.output_dir),
             "Splits":  str(total),
-        })
+        }, enabled=self.save_log)
 
         file_type = self.epub_path.suffix.lstrip(".").upper()
         log.log(f"📖  Buch:      {book_title}", "info")
@@ -2227,7 +2232,7 @@ Examples:
         """,
     )
     parser.add_argument("epub",            nargs="?", help="Path to the .epub, .pdf, .txt, .docx, or .doc file")
-    parser.add_argument("-o", "--output",  help="Output directory (default: <stem>/)")
+    parser.add_argument("-o", "--output",  help="Output directory (default: same folder as the input file)")
     parser.add_argument("-v", "--voice",   default=DEFAULT_VOICE,
                         help=f'TTS voice (default: {DEFAULT_VOICE}). Alternatives e.g. '
                              f'"de-DE-KatjaNeural"/"de-DE-SeraphinaMultilingualNeural" (female), '
@@ -2264,6 +2269,8 @@ Examples:
     parser.add_argument("--no-normalize-volume", action="store_false", dest="normalize_volume",
                         default=True,
                         help='Disable loudness normalization between chapters (requires ffmpeg; on by default)')
+    parser.add_argument("--save-log", action="store_true",
+                        help='Save the HTML Protokoll file to the output directory (off by default)')
     return parser
 
 
@@ -2326,6 +2333,7 @@ def main() -> None:
         tts_engine    = args.tts_engine,
         piper_voice   = args.piper_voice,
         normalize_volume = args.normalize_volume,
+        save_log      = args.save_log,
     )
     asyncio.run(converter.convert())
 

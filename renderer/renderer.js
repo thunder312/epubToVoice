@@ -14,6 +14,7 @@ const settings = {
   outputDir:   '',
   merge:       true,
   createZip:   false,
+  saveLog:     false,
   voice:       'de-DE-ConradNeural',
   rate:        '-10%',
   volume:      '+0%',
@@ -414,6 +415,7 @@ function bindEvents() {
   outputDirIn.addEventListener('input',  () => { settings.outputDir = outputDirIn.value.trim(); });
   $('chkMerge').addEventListener('change', () => { settings.merge = $('chkMerge').checked; });
   chkZip.addEventListener('change',        () => { settings.createZip = chkZip.checked; });
+  $('chkSaveLog').addEventListener('change', () => { settings.saveLog = $('chkSaveLog').checked; });
   voiceInput.addEventListener('change',  () => { settings.voice = voiceInput.value.trim(); });
   voiceInput.addEventListener('input',   () => { settings.voice = voiceInput.value.trim(); });
 
@@ -754,7 +756,11 @@ function buildJobEl(job) {
     startConversion();
   });
   el.querySelector('[data-reveal]')?.addEventListener('click', e => {
-    window.api.revealPath(e.currentTarget.dataset.reveal);
+    const p = e.currentTarget.dataset.reveal;
+    // A .zip is a file (select it in its folder); anything else is the
+    // output directory itself (open it directly).
+    if (/\.zip$/i.test(p)) window.api.revealPath(p);
+    else                   window.api.openInExplorer(p);
   });
 
   return el;
@@ -817,6 +823,7 @@ async function startConversion(previewMode = false) {
       resume:       job.resume || false,
       ttsEngine:    settings.ttsEngine,
       piperVoice:   settings.piperVoice,
+      saveLog:      settings.saveLog,
     };
 
     const result = await window.api.startConversion(opts);
@@ -929,7 +936,10 @@ function dirName(p) {
 function currentOutputDir() {
   if (settings.outputDir) return settings.outputDir;
   const withOutput = queue.find(j => j.outputPath);
-  if (withOutput) return dirName(withOutput.outputPath);
+  if (withOutput) {
+    // outputPath is the output directory itself, except when it's a .zip file
+    return /\.zip$/i.test(withOutput.outputPath) ? dirName(withOutput.outputPath) : withOutput.outputPath;
+  }
   if (queue[0]) return dirName(queue[0].path);
   return null;
 }
