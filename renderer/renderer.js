@@ -15,6 +15,7 @@ const settings = {
   merge:       true,
   createZip:   false,
   saveLog:     false,
+  optimizeBeforeReading: true,
   voice:       'de-DE-ConradNeural',
   rate:        '-10%',
   volume:      '+0%',
@@ -64,6 +65,7 @@ async function init() {
   checkPython();
   loadVoices();
   bindEvents();
+  renderTemplateOptions();
 }
 
 async function checkPython() {
@@ -416,6 +418,9 @@ function bindEvents() {
   $('chkMerge').addEventListener('change', () => { settings.merge = $('chkMerge').checked; });
   chkZip.addEventListener('change',        () => { settings.createZip = chkZip.checked; });
   $('chkSaveLog').addEventListener('change', () => { settings.saveLog = $('chkSaveLog').checked; });
+  $('chkOptimizeBeforeReading').addEventListener('change', () => {
+    settings.optimizeBeforeReading = $('chkOptimizeBeforeReading').checked;
+  });
   voiceInput.addEventListener('change',  () => { settings.voice = voiceInput.value.trim(); });
   voiceInput.addEventListener('input',   () => { settings.voice = voiceInput.value.trim(); });
 
@@ -502,6 +507,86 @@ function bindEvents() {
     demoAudio.onended = () => { demoStatus.textContent = ''; demoAudio = null; };
   });
 
+  // Voice/speed templates
+  $('templateSelect').addEventListener('change', () => {
+    const id = $('templateSelect').value;
+    $('btnDeleteTemplate').disabled = !id;
+    if (!id) return;
+    const t = loadTemplates().find(t => t.id === id);
+    if (t) applyTemplate(t);
+  });
+  $('btnSaveTemplate').addEventListener('click', () => {
+    const name = window.prompt('Name für diese Vorlage:');
+    if (!name || !name.trim()) return;
+    const list = loadTemplates();
+    const t = {
+      id:         crypto.randomUUID(),
+      name:       name.trim(),
+      ttsEngine:  settings.ttsEngine,
+      voice:      settings.voice,
+      piperVoice: settings.piperVoice,
+      rate:       settings.rate,
+      volume:     settings.volume,
+    };
+    list.push(t);
+    saveTemplates(list);
+    renderTemplateOptions(t.id);
+  });
+  $('btnDeleteTemplate').addEventListener('click', () => {
+    const id = $('templateSelect').value;
+    if (!id) return;
+    const t = loadTemplates().find(t => t.id === id);
+    if (!t || !window.confirm(`Vorlage "${t.name}" löschen?`)) return;
+    saveTemplates(loadTemplates().filter(t => t.id !== id));
+    renderTemplateOptions();
+  });
+
+}
+
+// ---------------------------------------------------------------------------
+// Voice/speed templates (saved to localStorage; survive app restarts)
+// ---------------------------------------------------------------------------
+const TEMPLATES_KEY = 'epubToVoice.voiceTemplates';
+
+function loadTemplates() {
+  try {
+    return JSON.parse(localStorage.getItem(TEMPLATES_KEY)) || [];
+  } catch {
+    return [];
+  }
+}
+
+function saveTemplates(list) {
+  localStorage.setItem(TEMPLATES_KEY, JSON.stringify(list));
+}
+
+function renderTemplateOptions(selectedId = '') {
+  const select = $('templateSelect');
+  const list   = loadTemplates();
+  select.innerHTML = '<option value="">— Vorlage wählen —</option>' +
+    list.map(t => `<option value="${escHtml(t.id)}">${escHtml(t.name)}</option>`).join('');
+  select.value = selectedId;
+  $('btnDeleteTemplate').disabled = !selectedId;
+}
+
+function applyTemplate(t) {
+  rateSlider.value = String(t.rate).replace('%', '').replace('+', '');
+  rateSlider.dispatchEvent(new Event('input'));
+  volumeSlider.value = String(t.volume).replace('%', '').replace('+', '');
+  volumeSlider.dispatchEvent(new Event('input'));
+
+  const radio = document.querySelector(`input[name="ttsEngine"][value="${t.ttsEngine}"]`);
+  if (radio) {
+    radio.checked = true;
+    radio.dispatchEvent(new Event('change'));
+  }
+  if (t.ttsEngine === 'piper') {
+    $('piperVoiceInput').value = t.piperVoice || '';
+    $('piperVoiceInput').dispatchEvent(new Event('input'));
+  } else {
+    voiceInput.value = t.voice || '';
+    voiceInput.dispatchEvent(new Event('input'));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -824,6 +909,7 @@ async function startConversion(previewMode = false) {
       ttsEngine:    settings.ttsEngine,
       piperVoice:   settings.piperVoice,
       saveLog:      settings.saveLog,
+      optimizeBeforeReading: settings.optimizeBeforeReading,
     };
 
     const result = await window.api.startConversion(opts);

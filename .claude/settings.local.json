@@ -35,7 +35,8 @@
       "Bash(PYTHONIOENCODING=utf-8 python epub_to_voice.py __TRACKED_VAR__/test_default/mybook.txt --merge --skip-short=0)",
       "Bash(rm -f \"C:\\\\Users\\\\dertl\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\D--Dropbox-Entwicklung-epubToVoice\\\\9ef7af73-2b17-46d7-b4f8-ab176b7837d8\\\\scratchpad\\\\test_default\\\\002_001_mybook.mp3\")",
       "Bash(PYTHONIOENCODING=utf-8 python epub_to_voice.py __TRACKED_VAR__/test_savelog/mybook.txt --merge --skip-short=0 --save-log)",
-      "Bash(PYTHONIOENCODING=utf-8 python epub_to_voice.py __TRACKED_VAR__/test_customdir/mybook.txt -o __TRACKED_VAR__/test_customdir/chosen_output --merge --skip-short=0)"
+      "Bash(PYTHONIOENCODING=utf-8 python epub_to_voice.py __TRACKED_VAR__/test_customdir/mybook.txt -o __TRACKED_VAR__/test_customdir/chosen_output --merge --skip-short=0)",
+      "Bash(start \"\" \"dist/EPUB to Voice Setup 1.0.0.exe\")"
     ]
   }
 }

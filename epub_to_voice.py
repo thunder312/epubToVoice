@@ -618,6 +618,7 @@ class EpubConverter:
         piper_voice: str = "de_DE-thorsten-high",
         normalize_volume: bool = True,          # loudness-normalize splits via ffmpeg (best effort)
         save_log: bool = False,                 # write the HTML Protokoll file to the output directory
+        optimize_before_reading: bool = True,   # splice real pauses at paragraph/heading/scene breaks
     ):
         self.epub_path    = Path(epub_path)
         self.output_dir   = Path(output_dir) if output_dir else self.epub_path.parent
@@ -636,6 +637,7 @@ class EpubConverter:
         self.piper_voice      = piper_voice
         self.normalize_volume = normalize_volume
         self.save_log         = save_log
+        self.optimize_before_reading = optimize_before_reading
         self._piper_instance  = None   # lazy-loaded
 
     @property
@@ -1187,20 +1189,34 @@ class EpubConverter:
         return self._piper_instance
 
     # ------------------------------------------------------------------
-    async def _synthesise_chunk_piper(
+    async def _synthesise_chunk_piper_legacy(
         self, segments: list[dict], out_path: Path,
         log: "HtmlLog | None" = None,
     ) -> None:
-        """Synthesise a chunk with Piper TTS (offline) and encode to MP3."""
-        import lameenc  # type: ignore
-        from piper.config import SynthesisConfig  # type: ignore
+        """
+        Synthesise a chunk with Piper TTS (offline) in a single request.
 
+        No paragraph/heading pause-splicing - used when ffmpeg is not
+        installed or "Optimiere vor dem Lesen" is disabled. See
+        _synthesise_chunk_piper_spliced() for the pause-aware path.
+        """
         text = segments_to_plain_text(segments)
         if not text.strip():
             return
+        await self._synthesise_piece_piper(text, self.rate, out_path)
+
+    # ------------------------------------------------------------------
+    async def _synthesise_piece_piper(self, text: str, rate: str, out_path: Path) -> int:
+        """
+        Synthesise one text piece via Piper TTS and encode to MP3.
+        Returns the sample rate of the generated audio (voice-model dependent,
+        needed so silence clips spliced in alongside it can match exactly).
+        """
+        import lameenc  # type: ignore
+        from piper.config import SynthesisConfig  # type: ignore
 
         voice  = self._get_piper_voice()
-        length = _rate_to_piper_length_scale(self.rate)
+        length = _rate_to_piper_length_scale(rate)
         cfg    = SynthesisConfig(length_scale=length)
 
         # synthesize() returns an iterable of AudioChunk objects (raw int16 PCM)
@@ -1225,16 +1241,69 @@ class EpubConverter:
             out_path.unlink(missing_ok=True)
             raise RuntimeError("Piper TTS: MP3-Ausgabe ist leer.")
 
+        return first.sample_rate
+
+    # ------------------------------------------------------------------
+    async def _synthesise_chunk_piper_spliced(
+        self, segments: list[dict], out_path: Path,
+        log: "HtmlLog | None" = None,
+    ) -> None:
+        """
+        Synthesise a chunk with Piper TTS, one piece per paragraph/heading,
+        spliced together with real silence gaps (ffmpeg) - the same approach
+        _synthesise_chunk_edge() uses, since Piper (like edge-tts) has no
+        reliable inline pause markup (see plan_audio_pieces()). Without this,
+        Piper reads straight through chapter/paragraph/heading boundaries
+        with no pause at all.
+        """
+        pieces = plan_audio_pieces(segments, self.rate)
+        tts_pieces = [p for p in pieces if p["kind"] == "tts"]
+        if not tts_pieces:
+            return
+
+        tmp_dir = out_path.parent / f".tmp_{out_path.stem}"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            # Two passes: Piper's sample rate (voice-model dependent) is only
+            # known after the first synthesis call, but silence clips need to
+            # match it exactly for ffmpeg's stream-copy concat to work.
+            resolved: list[Path | None] = [None] * len(pieces)
+            sample_rate = 22050  # Piper's common default; overwritten below
+            for idx, piece in enumerate(pieces):
+                if piece["kind"] != "tts":
+                    continue
+                part_path = tmp_dir / f"{idx:04d}.mp3"
+                sample_rate = await self._synthesise_piece_piper(piece["text"], piece["rate"], part_path)
+                resolved[idx] = part_path
+
+            part_paths: list[Path] = []
+            for idx, piece in enumerate(pieces):
+                if piece["kind"] == "silence":
+                    part_paths.append(self._get_silence_clip(piece["ms"], sample_rate=sample_rate))
+                else:
+                    part_paths.append(resolved[idx])
+
+            if not self._concat_mp3_ffmpeg(part_paths, out_path):
+                raise RuntimeError("Zusammenfügen der Segment-Audios via ffmpeg fehlgeschlagen.")
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
     # ------------------------------------------------------------------
     async def _synthesise_chunk(
         self, segments: list[dict], out_path: Path,
         log: "HtmlLog | None" = None,
     ) -> None:
-        """Dispatch to the right TTS engine."""
+        """Dispatch to the right TTS engine (and pause-splicing vs. legacy mode)."""
         if self.tts_engine == "piper":
-            await self._synthesise_chunk_piper(segments, out_path, log=log)
+            if self.optimize_before_reading and self._ffmpeg_path():
+                await self._synthesise_chunk_piper_spliced(segments, out_path, log=log)
+            else:
+                await self._synthesise_chunk_piper_legacy(segments, out_path, log=log)
         else:
-            await self._synthesise_chunk_edge(segments, out_path, log=log)
+            if self.optimize_before_reading:
+                await self._synthesise_chunk_edge(segments, out_path, log=log)
+            else:
+                await self._synthesise_chunk_edge_legacy(segments, out_path, log=log)
 
     # ------------------------------------------------------------------
     async def _synthesise_chunk_edge_legacy(
@@ -1307,15 +1376,16 @@ class EpubConverter:
 
     # ------------------------------------------------------------------
     @staticmethod
-    def _get_silence_clip(ms: int) -> Path:
+    def _get_silence_clip(ms: int, sample_rate: int = 24000) -> Path:
         """
-        Return a cached silent MP3 of the given duration (24 kHz mono,
-        matching Edge TTS's output format so ffmpeg concat -c copy stays clean).
+        Return a cached silent MP3 of the given duration (mono, at sample_rate,
+        matching the engine's own output so ffmpeg concat -c copy stays clean -
+        Edge TTS uses 24 kHz; Piper voices commonly use 22.05 kHz).
         Generated once via ffmpeg and reused across all conversions.
         """
         cache_dir = Path(tempfile.gettempdir()) / "epub_to_voice_silence"
         cache_dir.mkdir(parents=True, exist_ok=True)
-        path = cache_dir / f"silence_{ms}ms.mp3"
+        path = cache_dir / f"silence_{ms}ms_{sample_rate}.mp3"
         if path.exists() and path.stat().st_size > 0:
             return path
 
@@ -1323,7 +1393,7 @@ class EpubConverter:
         subprocess.run(
             [
                 ffmpeg, "-y", "-f", "lavfi",
-                "-i", "anullsrc=channel_layout=mono:sample_rate=24000",
+                "-i", f"anullsrc=channel_layout=mono:sample_rate={sample_rate}",
                 "-t", f"{max(ms, 1) / 1000:.3f}",
                 "-c:a", "libmp3lame", "-b:a", "48k",
                 str(path),
@@ -2271,6 +2341,10 @@ Examples:
                         help='Disable loudness normalization between chapters (requires ffmpeg; on by default)')
     parser.add_argument("--save-log", action="store_true",
                         help='Save the HTML Protokoll file to the output directory (off by default)')
+    parser.add_argument("--no-optimize-before-reading", action="store_false",
+                        dest="optimize_before_reading", default=True,
+                        help='Disable pause-splicing at paragraph/heading/scene breaks before reading '
+                             '(on by default; especially important for Piper TTS, which has no natural pauses otherwise)')
     return parser
 
 
@@ -2334,6 +2408,7 @@ def main() -> None:
         piper_voice   = args.piper_voice,
         normalize_volume = args.normalize_volume,
         save_log      = args.save_log,
+        optimize_before_reading = args.optimize_before_reading,
     )
     asyncio.run(converter.convert())
 
