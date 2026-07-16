@@ -467,6 +467,13 @@ ipcMain.handle('reveal-path', (event, p) => {
   }
 });
 
+ipcMain.handle('open-folder', async (event, dir) => {
+  if (!dir) return { error: 'no-path' };
+  if (!fs.existsSync(dir)) return { error: 'not-found' };
+  const err = await shell.openPath(dir);
+  return err ? { error: err } : { success: true };
+});
+
 ipcMain.handle('check-resumable', (event, filePath, customOutputDir) => {
   const parsed = path.parse(filePath);
   const stem   = parsed.name;

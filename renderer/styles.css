@@ -168,6 +168,7 @@ h1           { font-size: 16px; font-weight: 600; letter-spacing: .3px; }
 .settings-section { margin-top: 4px; padding: 4px 0; border-top: 1px solid var(--border); }
 
 .section-title { font-size: 12px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase; color: var(--text-muted); }
+.section-icon  { display: inline-block; margin-right: 6px; font-size: 13px; letter-spacing: normal; text-transform: none; }
 
 .section-toggle {
   display: flex;
@@ -439,7 +440,7 @@ h1           { font-size: 16px; font-weight: 600; letter-spacing: .3px; }
 .log-details {
   flex-shrink: 0;
   border-top: 1px solid var(--border);
-  max-height: 200px;
+  max-height: 420px;
   display: flex;
   flex-direction: column;
 }
@@ -467,7 +468,7 @@ details[open] .log-summary::before { content: '▾ '; }
   line-height: 1.7;
   color: var(--text-muted);
   background: var(--surface);
-  max-height: 150px;
+  max-height: 370px;
 }
 .log-output::-webkit-scrollbar       { width: 4px; }
 .log-output::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }

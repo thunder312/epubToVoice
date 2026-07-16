@@ -41,7 +41,8 @@ contextBridge.exposeInMainWorld('api', {
   cancelJob:       jobId  => ipcRenderer.invoke('cancel-job', jobId),
 
   // Shell
-  revealPath: p => ipcRenderer.invoke('reveal-path', p),
+  revealPath:     p   => ipcRenderer.invoke('reveal-path', p),
+  openInExplorer: dir => ipcRenderer.invoke('open-folder', dir),
 
   // Resume detection
   checkResumable: (filePath, outputDir) => ipcRenderer.invoke('check-resumable', filePath, outputDir || null),

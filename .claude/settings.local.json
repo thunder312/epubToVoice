@@ -20,7 +20,18 @@
       "Bash(py:*)",
       "Bash(npm run:*)",
       "Bash(ls -lh \"D:\\\\Dropbox\\\\Entwicklung\\\\epubToVoice\\\\dist\"/*.exe)",
-      "Bash(dir \"D:\\\\Dropbox\\\\Entwicklung\\\\epubToVoice\\\\dist\\\\*.exe\")"
+      "Bash(dir \"D:\\\\Dropbox\\\\Entwicklung\\\\epubToVoice\\\\dist\\\\*.exe\")",
+      "Bash(where ffmpeg *)",
+      "Bash(PYTHONIOENCODING=utf-8 python epub_to_voice.py \"C:\\\\Users\\\\dertl\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\D--Dropbox-Entwicklung-epubToVoice\\\\7729dcf9-9855-4302-9649-d0078fab0ba0\\\\scratchpad\\\\test_book.docx\" -o \"C:\\\\Users\\\\dertl\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\D--Dropbox-Entwicklung-epubToVoice\\\\7729dcf9-9855-4302-9649-d0078fab0ba0\\\\scratchpad\\\\out\" --merge)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(git commit -m ' *)",
+      "Bash(ffmpeg -i \"C:\\\\Users\\\\dertl\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\D--Dropbox-Entwicklung-epubToVoice\\\\7729dcf9-9855-4302-9649-d0078fab0ba0\\\\scratchpad\\\\out2\\\\001_001_test_book2.mp3\" -af silencedetect=noise=-35dB:d=0.15 -f null -)",
+      "Bash(PATH=\"/usr/bin:/bin\" PYTHONIOENCODING=utf-8 python epub_to_voice.py \"C:\\\\Users\\\\dertl\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\D--Dropbox-Entwicklung-epubToVoice\\\\7729dcf9-9855-4302-9649-d0078fab0ba0\\\\scratchpad\\\\test_book2.docx\" -o \"C:\\\\Users\\\\dertl\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\D--Dropbox-Entwicklung-epubToVoice\\\\7729dcf9-9855-4302-9649-d0078fab0ba0\\\\scratchpad\\\\out3\" --skip-short=0)",
+      "Bash(node -c renderer/renderer.js)",
+      "Bash(node -c main.js)",
+      "Skill(run)",
+      "PowerShell(Get-Process *)",
+      "Bash(node -e \"console.log\\(require.resolve\\('playwright'\\)\\)\")"
     ]
   }
 }

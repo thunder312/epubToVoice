@@ -404,6 +404,13 @@ function bindEvents() {
     if (dir) { outputDirIn.value = dir; settings.outputDir = dir; }
   });
 
+  $('btnOpenOutput').addEventListener('click', async () => {
+    const dir = currentOutputDir();
+    if (!dir) { log('⚠️  Kein Ausgabeordner ermittelbar – zuerst eine Datei hinzufügen oder Ausgabeverzeichnis wählen.'); return; }
+    const res = await window.api.openInExplorer(dir);
+    if (res?.error) log(`⚠️  Ordner konnte nicht geöffnet werden: ${dir}`);
+  });
+
   outputDirIn.addEventListener('input',  () => { settings.outputDir = outputDirIn.value.trim(); });
   $('chkMerge').addEventListener('change', () => { settings.merge = $('chkMerge').checked; });
   chkZip.addEventListener('change',        () => { settings.createZip = chkZip.checked; });
@@ -910,6 +917,21 @@ function log(text, type = null) {
 // ---------------------------------------------------------------------------
 function baseName(p) {
   return p.replace(/\\/g, '/').split('/').pop();
+}
+function dirName(p) {
+  const norm = p.replace(/\\/g, '/').replace(/\/+$/, '');
+  const idx  = norm.lastIndexOf('/');
+  return idx > 0 ? norm.slice(0, idx) : norm;
+}
+// Best-effort guess at the folder the user means by "the output folder":
+// the explicit setting if present, otherwise the folder of a finished job's
+// output, otherwise the folder of the first queued input file.
+function currentOutputDir() {
+  if (settings.outputDir) return settings.outputDir;
+  const withOutput = queue.find(j => j.outputPath);
+  if (withOutput) return dirName(withOutput.outputPath);
+  if (queue[0]) return dirName(queue[0].path);
+  return null;
 }
 function escHtml(s) {
   if (!s) return '';
