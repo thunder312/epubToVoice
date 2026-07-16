@@ -380,6 +380,16 @@ function bindEvents() {
     addToQueue(epubs);
   });
 
+  // Accordion sections
+  document.querySelectorAll('.section-toggle').forEach(toggle => {
+    toggle.addEventListener('click', () => {
+      const target = $(toggle.dataset.target);
+      const expanded = toggle.getAttribute('aria-expanded') === 'true';
+      toggle.setAttribute('aria-expanded', String(!expanded));
+      target.classList.toggle('open', !expanded);
+    });
+  });
+
   // Buttons
   $('btnAddFiles').addEventListener('click', async () => {
     const files = await window.api.openFiles();

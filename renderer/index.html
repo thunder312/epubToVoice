@@ -28,115 +28,129 @@
     <aside class="panel panel--settings">
 
       <!-- Drop zone -->
-      <div class="drop-zone" id="dropZone">
+      <div class="drop-zone drop-zone--compact" id="dropZone">
         <div class="drop-zone-icon">📖</div>
         <p class="drop-zone-label">EPUB · PDF · TXT · DOCX hier ablegen</p>
-        <p class="drop-zone-hint">oder</p>
         <div class="btn-row">
-          <button class="btn btn--secondary" id="btnAddFiles">Dateien wählen</button>
-          <button class="btn btn--secondary" id="btnAddFolder">Ordner wählen</button>
+          <button class="btn btn--secondary btn--sm" id="btnAddFiles">Dateien wählen</button>
+          <button class="btn btn--secondary btn--sm" id="btnAddFolder">Ordner wählen</button>
         </div>
       </div>
 
       <!-- Output section -->
       <section class="settings-section">
-        <h2 class="section-title">Ausgabe</h2>
+        <button class="section-toggle" aria-expanded="false" data-target="sectionOutput">
+          <span class="section-title">Ausgabe</span>
+          <span class="toggle-arrow">▸</span>
+        </button>
+        <div class="collapsible" id="sectionOutput">
 
-        <label class="field-label">Ausgabeverzeichnis</label>
-        <div class="input-row">
-          <input type="text" id="outputDir" class="input" placeholder="Gleich wie Eingabedatei">
-          <button class="btn btn--icon" id="btnBrowseOutput" title="Durchsuchen">📁</button>
+          <label class="field-label" style="margin-top:0">Ausgabeverzeichnis</label>
+          <div class="input-row">
+            <input type="text" id="outputDir" class="input" placeholder="Gleich wie Eingabedatei">
+            <button class="btn btn--icon" id="btnBrowseOutput" title="Durchsuchen">📁</button>
+          </div>
+
+          <label class="toggle-label">
+            <input type="checkbox" id="chkMerge">
+            <span class="toggle-text">Alles in eine MP3 zusammenführen</span>
+          </label>
+          <label class="toggle-label">
+            <input type="checkbox" id="chkZip">
+            <span class="toggle-text">Als ZIP-Archiv verpacken</span>
+          </label>
         </div>
-
-        <label class="toggle-label">
-          <input type="checkbox" id="chkMerge">
-          <span class="toggle-text">Alles in eine MP3 zusammenführen</span>
-        </label>
-        <label class="toggle-label">
-          <input type="checkbox" id="chkZip">
-          <span class="toggle-text">Als ZIP-Archiv verpacken</span>
-        </label>
       </section>
 
       <!-- Translation section -->
       <section class="settings-section">
-        <h2 class="section-title">Übersetzung</h2>
-        <label class="toggle-label">
-          <input type="checkbox" id="chkTranslate">
-          <span class="toggle-text">Text vor Umwandlung übersetzen</span>
-        </label>
-        <div id="translateOptions" style="display:none">
-          <label class="field-label" style="margin-top:8px">Zielsprache</label>
-          <select id="translateTarget" class="input">
-            <option value="de">Englisch → Deutsch</option>
-          </select>
-          <p class="field-hint" style="margin-top:4px">Verwendet Google Translate (Internetverbindung erforderlich)</p>
+        <button class="section-toggle" aria-expanded="false" data-target="sectionTranslate">
+          <span class="section-title">Übersetzung</span>
+          <span class="toggle-arrow">▸</span>
+        </button>
+        <div class="collapsible" id="sectionTranslate">
+          <label class="toggle-label" style="margin-top:0">
+            <input type="checkbox" id="chkTranslate">
+            <span class="toggle-text">Text vor Umwandlung übersetzen</span>
+          </label>
+          <div id="translateOptions" style="display:none">
+            <label class="field-label" style="margin-top:8px">Zielsprache</label>
+            <select id="translateTarget" class="input">
+              <option value="de">Englisch → Deutsch</option>
+            </select>
+            <p class="field-hint" style="margin-top:4px">Verwendet Google Translate (Internetverbindung erforderlich)</p>
+          </div>
         </div>
       </section>
 
-      <!-- Voice settings (always expanded) -->
+      <!-- Voice settings -->
       <section class="settings-section">
-        <h2 class="section-title">Stimme &amp; Geschwindigkeit</h2>
+        <button class="section-toggle" aria-expanded="true" data-target="sectionVoice">
+          <span class="section-title">Stimme &amp; Geschwindigkeit</span>
+          <span class="toggle-arrow">▸</span>
+        </button>
+        <div class="collapsible open" id="sectionVoice">
 
-        <div id="voiceSettings">
-          <!-- TTS Engine selector -->
-          <label class="field-label">TTS-Engine</label>
-          <div class="engine-toggle">
-            <label class="engine-option">
-              <input type="radio" name="ttsEngine" id="engineEdge" value="edge" checked>
-              <span>Edge TTS <span class="engine-hint">(online)</span></span>
-            </label>
-            <label class="engine-option">
-              <input type="radio" name="ttsEngine" id="enginePiper" value="piper">
-              <span>Piper TTS <span class="engine-hint">(offline)</span></span>
-            </label>
-          </div>
-
-          <!-- Edge TTS voice picker -->
-          <div id="edgeVoicePanel">
-            <label class="field-label">Stimme</label>
-            <div id="voiceStatus" class="voice-loading">Stimmen werden geladen…</div>
-            <div class="voice-row" style="display:none" id="voiceRow">
-              <input list="voiceDatalist" id="voiceInput" class="input" placeholder="Stimme suchen…"
-                     autocomplete="off">
-              <button class="btn btn--icon" id="btnDemoVoice" title="Stimme anhören">▶</button>
+          <div id="voiceSettings">
+            <!-- TTS Engine selector -->
+            <label class="field-label" style="margin-top:0">TTS-Engine</label>
+            <div class="engine-toggle">
+              <label class="engine-option">
+                <input type="radio" name="ttsEngine" id="engineEdge" value="edge" checked>
+                <span>Edge TTS <span class="engine-hint">(online)</span></span>
+              </label>
+              <label class="engine-option">
+                <input type="radio" name="ttsEngine" id="enginePiper" value="piper">
+                <span>Piper TTS <span class="engine-hint">(offline)</span></span>
+              </label>
             </div>
-            <datalist id="voiceDatalist"></datalist>
-            <div id="voiceCount" class="voice-count" style="display:none"></div>
-            <div id="voiceQuickPicks" class="voice-quickpick" style="display:none"></div>
-            <div id="demoStatus" class="demo-status"></div>
-            <div id="langSuggest" class="lang-suggest" style="display:none"></div>
-          </div>
 
-          <!-- Piper TTS voice picker -->
-          <div id="piperVoicePanel" style="display:none">
-            <label class="field-label">Piper-Stimme</label>
-            <input type="text" id="piperVoiceInput" class="input"
-                   value="de_DE-thorsten-high"
-                   placeholder="z. B. de_DE-thorsten-high oder en_US-amy-medium">
-            <div class="piper-hint">
-              Stimmen werden beim ersten Start automatisch heruntergeladen.<br>
-              Verfügbare Stimmen: <a href="#" id="piperVoicesLink">HuggingFace / rhasspy/piper-voices</a>
+            <!-- Edge TTS voice picker -->
+            <div id="edgeVoicePanel">
+              <label class="field-label">Stimme</label>
+              <div id="voiceStatus" class="voice-loading">Stimmen werden geladen…</div>
+              <div class="voice-row" style="display:none" id="voiceRow">
+                <input list="voiceDatalist" id="voiceInput" class="input" placeholder="Stimme suchen…"
+                       autocomplete="off">
+                <button class="btn btn--icon" id="btnDemoVoice" title="Stimme anhören">▶</button>
+              </div>
+              <datalist id="voiceDatalist"></datalist>
+              <div id="voiceCount" class="voice-count" style="display:none"></div>
+              <div id="voiceQuickPicks" class="voice-quickpick" style="display:none"></div>
+              <div id="demoStatus" class="demo-status"></div>
+              <div id="langSuggest" class="lang-suggest" style="display:none"></div>
             </div>
+
+            <!-- Piper TTS voice picker -->
+            <div id="piperVoicePanel" style="display:none">
+              <label class="field-label">Piper-Stimme</label>
+              <input type="text" id="piperVoiceInput" class="input"
+                     value="de_DE-thorsten-high"
+                     placeholder="z. B. de_DE-thorsten-high oder en_US-amy-medium">
+              <div class="piper-hint">
+                Stimmen werden beim ersten Start automatisch heruntergeladen.<br>
+                Verfügbare Stimmen: <a href="#" id="piperVoicesLink">HuggingFace / rhasspy/piper-voices</a>
+              </div>
+            </div>
+
+            <label class="field-label">
+              Geschwindigkeit&ensp;<span id="rateDisplay" class="value-display">-10%</span>
+            </label>
+            <input type="range" id="rateSlider" class="slider" min="-50" max="100" step="5" value="-10">
+            <div class="slider-labels"><span>Langsam</span><span>Schnell</span></div>
+
+            <label class="field-label">
+              Lautstärke&ensp;<span id="volumeDisplay" class="value-display">+0%</span>
+            </label>
+            <input type="range" id="volumeSlider" class="slider" min="-50" max="50" step="5" value="0">
+            <div class="slider-labels"><span>Leise</span><span>Laut</span></div>
+
+            <label class="field-label">
+              Kurze Kapitel überspringen
+              <span class="field-hint">(min. Zeichen)</span>
+            </label>
+            <input type="number" id="skipShort" class="input input--narrow" value="60" min="0" max="9999">
           </div>
-
-          <label class="field-label">
-            Geschwindigkeit&ensp;<span id="rateDisplay" class="value-display">-10%</span>
-          </label>
-          <input type="range" id="rateSlider" class="slider" min="-50" max="100" step="5" value="-10">
-          <div class="slider-labels"><span>Langsam</span><span>Schnell</span></div>
-
-          <label class="field-label">
-            Lautstärke&ensp;<span id="volumeDisplay" class="value-display">+0%</span>
-          </label>
-          <input type="range" id="volumeSlider" class="slider" min="-50" max="50" step="5" value="0">
-          <div class="slider-labels"><span>Leise</span><span>Laut</span></div>
-
-          <label class="field-label">
-            Kurze Kapitel überspringen
-            <span class="field-hint">(min. Zeichen)</span>
-          </label>
-          <input type="number" id="skipShort" class="input input--narrow" value="60" min="0" max="9999">
         </div>
       </section>
 
