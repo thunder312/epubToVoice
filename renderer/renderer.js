@@ -12,7 +12,7 @@ let allVoices   = [];     // full list loaded at startup (for language-based fil
 
 const settings = {
   outputDir:   '',
-  merge:       false,
+  merge:       true,
   createZip:   false,
   voice:       'de-DE-ConradNeural',
   rate:        '-10%',
