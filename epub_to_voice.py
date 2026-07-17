@@ -115,6 +115,59 @@ def replace_dashes_for_tts(text: str) -> str:
     return text.strip()
 
 
+# Abbreviations that end in a period cause an unnatural mid-sentence pause
+# with Edge TTS (and, to a lesser degree, Piper/espeak): both engines treat
+# every "." as a sentence/breath boundary, regardless of whether it's really
+# an abbreviation. Spelling them out removes the stray pause and is always
+# correct to speak aloud, whether the abbreviation sits mid-sentence or not.
+# Order matters: longer/more specific patterns first so they aren't shadowed.
+_ABBREVIATIONS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"\bz\.\s?B\."), "zum Beispiel"),
+    (re.compile(r"\bd\.\s?h\."), "das hei\u00dft"),
+    (re.compile(r"\bu\.\s?a\."), "unter anderem"),
+    (re.compile(r"\bu\.\s?[\u00c4\u00dc]\."), "und \u00c4hnliches"),
+    (re.compile(r"\bo\.\s?[\u00c4\u00dc]\."), "oder \u00c4hnliches"),
+    (re.compile(r"\bs\.\s?o\."), "siehe oben"),
+    (re.compile(r"\bs\.\s?u\."), "siehe unten"),
+    (re.compile(r"\bm\.\s?E\."), "meines Erachtens"),
+    (re.compile(r"\busw\."), "und so weiter"),
+    (re.compile(r"\busf\."), "und so fort"),
+    (re.compile(r"\betc\."), "et cetera"),
+    (re.compile(r"\bbzw\."), "beziehungsweise"),
+    (re.compile(r"\bbzgl\."), "bez\u00fcglich"),
+    (re.compile(r"\bggf\."), "gegebenenfalls"),
+    (re.compile(r"\bevtl\."), "eventuell"),
+    (re.compile(r"\bggfs\."), "gegebenenfalls"),
+    (re.compile(r"\binkl\."), "inklusive"),
+    (re.compile(r"\bexkl\."), "exklusive"),
+    (re.compile(r"\bvgl\."), "vergleiche"),
+    (re.compile(r"\bca\."), "circa"),
+    (re.compile(r"\bNr\."), "Nummer"),
+    (re.compile(r"\bAbb\."), "Abbildung"),
+    (re.compile(r"\bKap\."), "Kapitel"),
+    (re.compile(r"\bHrsg\."), "Herausgeber"),
+    (re.compile(r"\bMio\."), "Millionen"),
+    (re.compile(r"\bMrd\."), "Milliarden"),
+    (re.compile(r"\bDr\."), "Doktor"),
+    (re.compile(r"\bProf\."), "Professor"),
+    (re.compile(r"(?<=\w)[Ss]tr\."), "stra\u00dfe"),   # Hauptstr. -> Hauptstra\u00dfe
+]
+
+
+def expand_abbreviations_for_tts(text: str) -> str:
+    """Spell out common German abbreviations so TTS engines don't pause on their periods."""
+    if not text or "." not in text:
+        return text
+    for pattern, replacement in _ABBREVIATIONS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+def optimize_text_for_tts(text: str) -> str:
+    """Combine all TTS-readability fixes applied right before synthesis."""
+    return replace_dashes_for_tts(expand_abbreviations_for_tts(text))
+
+
 def sanitize_text(text: str) -> str:
     """Remove control characters and normalize whitespace."""
     text = text.replace("\ufffd", "")
@@ -279,7 +332,7 @@ def segments_to_tts_text(segments: list[dict]) -> str:
 
     parts: list[str] = []
     for i, seg in enumerate(segments):
-        text = replace_dashes_for_tts(seg["text"].strip())
+        text = optimize_text_for_tts(seg["text"].strip())
         if not text:
             continue
 
@@ -315,7 +368,7 @@ def segments_to_fallback_text(segments: list[dict]) -> str:
     for i, seg in enumerate(segments):
         if i > 0:
             parts.append("Neues Kapitel." if seg["type"] == SEG_HEADING else "Weiter.")
-        parts.append(replace_dashes_for_tts(seg["text"]))
+        parts.append(optimize_text_for_tts(seg["text"]))
     return " ".join(parts)
 
 
@@ -412,7 +465,7 @@ def plan_audio_pieces(segments: list[dict], base_rate: str) -> list[dict]:
     prev_kind: str | None = None   # "heading" | "paragraph" | "scene_break"
 
     for seg in segments:
-        text = replace_dashes_for_tts(seg["text"].strip())
+        text = optimize_text_for_tts(seg["text"].strip())
         if not text:
             continue
 
@@ -441,6 +494,24 @@ def plan_audio_pieces(segments: list[dict], base_rate: str) -> list[dict]:
             prev_kind = "paragraph"
 
     return pieces
+
+
+def pieces_to_debug_text(pieces: list[dict]) -> str:
+    """
+    Render planned audio pieces (see plan_audio_pieces()) as human-readable
+    text, so "Optimiere vor dem Lesen" can be inspected split-by-split:
+    exactly what text is spoken, and how long each spliced-in silence is.
+    """
+    lines: list[str] = []
+    for piece in pieces:
+        if piece["kind"] == "silence":
+            lines.append(f"⏸  [Pause: {piece['ms']} ms]")
+        else:
+            prosody = ""
+            if piece.get("pitch", "+0Hz") != "+0Hz":
+                prosody = f"  [Überschrift – Pitch {piece['pitch']}, Rate {piece['rate']}]"
+            lines.append(f"{piece['text']}{prosody}")
+    return "\n\n".join(lines) + "\n"
 
 
 # ---------------------------------------------------------------------------
@@ -1260,6 +1331,7 @@ class EpubConverter:
         tts_pieces = [p for p in pieces if p["kind"] == "tts"]
         if not tts_pieces:
             return
+        self._save_optimized_debug_text(pieces, out_path)
 
         tmp_dir = out_path.parent / f".tmp_{out_path.stem}"
         tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -1403,6 +1475,21 @@ class EpubConverter:
         return path
 
     # ------------------------------------------------------------------
+    @staticmethod
+    def _save_optimized_debug_text(pieces: list[dict], out_path: Path) -> None:
+        """
+        Save the "Optimiere vor dem Lesen"-planned text/pauses for this split
+        as a plain-text file next to the audio output, so the actual
+        wording and pause placement chosen by the optimizer can be checked.
+        Best-effort - a write failure here must never abort the conversion.
+        """
+        try:
+            debug_path = out_path.with_name(out_path.stem + "_optimiert.txt")
+            debug_path.write_text(pieces_to_debug_text(pieces), encoding="utf-8")
+        except OSError:
+            pass
+
+    # ------------------------------------------------------------------
     async def _synthesise_piece_edge(
         self, text: str, pitch: str, rate: str, out_path: Path,
         log: "HtmlLog | None" = None,
@@ -1478,6 +1565,7 @@ class EpubConverter:
         tts_pieces = [p for p in pieces if p["kind"] == "tts"]
         if not tts_pieces:
             return
+        self._save_optimized_debug_text(pieces, out_path)
 
         tmp_dir = out_path.parent / f".tmp_{out_path.stem}"
         tmp_dir.mkdir(parents=True, exist_ok=True)
