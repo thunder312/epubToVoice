@@ -14,6 +14,10 @@ piper-tts>=1.2          # Offline TTS engine (optional; required for Piper engin
 lameenc>=1.7            # MP3 encoder for Piper output (optional; required for Piper/Qwen engine support)
 qwen-tts>=0.1.1         # Offline, AI-based TTS engine (optional; required for Qwen3-TTS engine support)
 torch>=2.1              # Qwen3-TTS model runtime (optional; required for Qwen3-TTS engine support)
+torchaudio>=2.1         # Qwen3-TTS audio I/O (optional; required for Qwen3-TTS). MUST match torch's
+                         # version (e.g. both 2.4.x) - if torch is already installed system-wide,
+                         # `pip install qwen-tts` alone can pull a mismatched torchaudio and crash
+                         # with "WinError 127" on import. Fix: pip install torchaudio==<torch version>.
 huggingface_hub>=0.20   # Model download/caching for Qwen3-TTS (optional; pulled in by qwen-tts, listed explicitly)
 
 # System dependency (not a pip package): ffmpeg must be on PATH for
