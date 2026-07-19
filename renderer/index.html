@@ -68,7 +68,7 @@
             <input type="checkbox" id="chkOptimizeBeforeReading" checked>
             <span class="toggle-text">Optimiere vor dem Lesen</span>
           </label>
-          <p class="field-hint">Fügt echte Sprechpausen bei Kapiteln/Absätzen ein und schreibt Abkürzungen aus (z. B. "usw." → "und so weiter") – für Edge TTS &amp; Piper TTS. Optimierte Texte werden pro Split als .txt im Ausgabeordner gespeichert.</p>
+          <p class="field-hint">Fügt echte Sprechpausen bei Kapiteln/Absätzen ein und schreibt Abkürzungen aus (z. B. "usw." → "und so weiter") – für Edge TTS, Piper TTS &amp; Qwen3-TTS. Optimierte Texte werden pro Split als .txt im Ausgabeordner gespeichert.</p>
         </div>
       </section>
 
@@ -123,6 +123,10 @@
                 <input type="radio" name="ttsEngine" id="enginePiper" value="piper">
                 <span>Piper TTS <span class="engine-hint">(offline)</span></span>
               </label>
+              <label class="engine-option">
+                <input type="radio" name="ttsEngine" id="engineQwen" value="qwen">
+                <span>Qwen3-TTS <span class="engine-hint">(offline, KI)</span></span>
+              </label>
             </div>
 
             <!-- Edge TTS voice picker -->
@@ -152,6 +156,30 @@
               <div class="piper-hint">
                 Stimmen werden beim ersten Start automatisch heruntergeladen.<br>
                 Verfügbare Stimmen: <a href="#" id="piperVoicesLink">HuggingFace / rhasspy/piper-voices</a>
+              </div>
+            </div>
+
+            <!-- Qwen3-TTS voice picker -->
+            <div id="qwenVoicePanel" style="display:none">
+              <label class="field-label">Qwen-Stimme</label>
+              <div class="voice-row">
+                <select id="qwenVoiceSelect" class="input"></select>
+                <button class="btn btn--icon" id="btnDemoVoiceQwen" title="Stimme anhören">▶</button>
+              </div>
+
+              <label class="toggle-label" style="margin-top:10px">
+                <input type="checkbox" id="chkQwenClone">
+                <span class="toggle-text">Eigene Stimme per Referenzaudio klonen</span>
+              </label>
+              <div id="qwenCloneRow" class="input-row" style="display:none; margin-top:6px">
+                <input type="text" id="qwenCloneAudioInput" class="input" readonly
+                       placeholder="Referenz-WAV auswählen…">
+                <button class="btn btn--icon" id="btnBrowseQwenClone" title="Referenzaudio auswählen">📁</button>
+              </div>
+
+              <div class="qwen-hint">
+                Modell wird beim ersten Start automatisch heruntergeladen (mehrere GB, läuft komplett offline).
+                Voice-Cloning nutzt nur die Klangfarbe der Referenzaufnahme, kein Transkript nötig.
               </div>
             </div>
 

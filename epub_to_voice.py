@@ -40,6 +40,22 @@ DEFAULT_VOICE  = "de-DE-ConradNeural"
 DEFAULT_RATE   = "-10%"
 DEFAULT_VOLUME = "+0%"
 
+# Qwen3-TTS (offline, local, AI-based) — see _get_qwen_model(). Two separate
+# model variants are used: CustomVoice (preset speakers) and Base (voice
+# cloning from a reference audio file); there is no single model for both.
+QWEN_CUSTOMVOICE_MODEL = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+QWEN_BASE_MODEL        = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+QWEN_DEFAULT_VOICE     = "Vivian"
+QWEN_SPEAKERS = [
+    "Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric", "Ryan", "Aiden", "Ono_Anna", "Sohee",
+]
+# BCP-47 language prefix (as used by --translate-to) → Qwen3-TTS language name.
+QWEN_LANGUAGE_MAP = {
+    "de": "German", "en": "English", "zh": "Chinese", "ja": "Japanese",
+    "ko": "Korean", "fr": "French", "ru": "Russian", "pt": "Portuguese",
+    "es": "Spanish", "it": "Italian",
+}
+
 # A few recommended alternative voices (see --list-voices for the full,
 # regularly-updated catalog of all Edge TTS languages/voices):
 #   German female : de-DE-KatjaNeural, de-DE-AmalaNeural,
@@ -313,6 +329,27 @@ def _rate_to_piper_length_scale(rate: str) -> float:
         # +20% faster in Edge → factor 1/1.20 in Piper
         factor = 1.0 + sign * pct / 100.0
         return round(1.0 / max(factor, 0.1), 3)
+    except ValueError:
+        return 1.0
+
+
+def _rate_to_tempo_factor(rate: str) -> float:
+    """Convert an Edge-TTS rate string like '+20%' or '-10%' to an ffmpeg
+    'atempo' factor (used for Qwen3-TTS, which - unlike Edge/Piper - has no
+    native speed parameter, so speed is adjusted as an ffmpeg post-process).
+
+    atempo >1.0 = faster, <1.0 = slower - same direction as the rate string.
+    Clamped to [0.5, 2.0], ffmpeg's atempo range for a single filter pass,
+    which comfortably covers this app's -50%..+100% rate slider.
+    """
+    rate = rate.strip()
+    if not rate or rate == "+0%":
+        return 1.0
+    try:
+        sign = 1 if rate.startswith("+") else -1
+        pct  = float(rate.lstrip("+-").rstrip("%"))
+        factor = 1.0 + sign * pct / 100.0
+        return round(min(max(factor, 0.5), 2.0), 3)
     except ValueError:
         return 1.0
 
@@ -685,8 +722,11 @@ class EpubConverter:
         skip_chapters: set[int] | None = None,  # EPUB/TXT: doc-order indices to skip
         translate_to: str | None = None,        # BCP-47 language code to translate into (e.g. "de")
         resume: bool = False,                   # skip splits whose output file already exists
-        tts_engine: str = "edge",               # "edge" or "piper"
+        tts_engine: str = "edge",               # "edge", "piper" or "qwen"
         piper_voice: str = "de_DE-thorsten-high",
+        qwen_voice: str = QWEN_DEFAULT_VOICE,       # preset speaker name (CustomVoice model)
+        qwen_clone_audio: str | Path | None = None, # reference WAV for voice cloning (Base model)
+        qwen_model_dir: str | Path | None = None,   # custom HF cache dir (default: HF's own cache)
         normalize_volume: bool = True,          # loudness-normalize splits via ffmpeg (best effort)
         save_log: bool = False,                 # write the HTML Protokoll file to the output directory
         optimize_before_reading: bool = True,   # splice real pauses at paragraph/heading/scene breaks
@@ -706,14 +746,19 @@ class EpubConverter:
         self.resume        = resume
         self.tts_engine       = tts_engine
         self.piper_voice      = piper_voice
+        self.qwen_voice          = qwen_voice
+        self.qwen_clone_audio    = Path(qwen_clone_audio) if qwen_clone_audio else None
+        self.qwen_model_dir      = Path(qwen_model_dir) if qwen_model_dir else None
         self.normalize_volume = normalize_volume
         self.save_log         = save_log
         self.optimize_before_reading = optimize_before_reading
         self._piper_instance  = None   # lazy-loaded
+        self._qwen_customvoice_instance = None   # lazy-loaded (preset speakers)
+        self._qwen_base_instance        = None   # lazy-loaded (voice cloning)
 
     @property
     def _audio_ext(self) -> str:
-        return ".mp3"  # both Edge and Piper output MP3
+        return ".mp3"  # Edge, Piper and Qwen3-TTS all output MP3
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -1361,6 +1406,167 @@ class EpubConverter:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
     # ------------------------------------------------------------------
+    def _get_qwen_model(self, need_clone: bool):
+        """
+        Lazy-load and cache the Qwen3-TTS model instance.
+
+        Two separate model variants exist and are cached independently:
+        CustomVoice (preset speakers, via generate_custom_voice) and Base
+        (voice cloning from a reference audio file, via generate_voice_clone).
+        Both are downloaded from Hugging Face on first use (like Piper's
+        model download, but via the qwen_tts/transformers HF cache instead
+        of a manual urlretrieve - see _ensure_piper_model()).
+        """
+        attr = "_qwen_base_instance" if need_clone else "_qwen_customvoice_instance"
+        if getattr(self, attr) is None:
+            import torch                       # type: ignore
+            from qwen_tts import Qwen3TTSModel  # type: ignore
+
+            model_id = QWEN_BASE_MODEL if need_clone else QWEN_CUSTOMVOICE_MODEL
+            device   = "cuda:0" if torch.cuda.is_available() else "cpu"
+            dtype    = torch.bfloat16 if device.startswith("cuda") else torch.float32
+
+            kwargs: dict = {"device_map": device, "dtype": dtype}
+            if self.qwen_model_dir:
+                kwargs["cache_dir"] = str(self.qwen_model_dir)
+
+            print(f"  🔊  Initialisiere Qwen3-TTS: {model_id} ({device}) …", flush=True)
+            setattr(self, attr, Qwen3TTSModel.from_pretrained(model_id, **kwargs))
+        return getattr(self, attr)
+
+    # ------------------------------------------------------------------
+    async def _synthesise_chunk_qwen_legacy(
+        self, segments: list[dict], out_path: Path,
+        log: "HtmlLog | None" = None,
+    ) -> None:
+        """
+        Synthesise a chunk with Qwen3-TTS (offline) in a single request.
+
+        No paragraph/heading pause-splicing - used when ffmpeg is not
+        installed or "Optimiere vor dem Lesen" is disabled. See
+        _synthesise_chunk_qwen_spliced() for the pause-aware path.
+        """
+        text = segments_to_plain_text(segments)
+        if not text.strip():
+            return
+        await self._synthesise_piece_qwen(text, self.rate, out_path)
+
+    # ------------------------------------------------------------------
+    async def _synthesise_piece_qwen(self, text: str, rate: str, out_path: Path) -> int:
+        """
+        Synthesise one text piece via Qwen3-TTS and encode to MP3.
+        Returns the sample rate of the generated audio (needed so silence
+        clips spliced in alongside it can match exactly).
+
+        Uses the CustomVoice model (preset speaker) unless a voice-clone
+        reference audio was configured, in which case the Base model is
+        used with x_vector_only_mode=True - cloning from the reference
+        audio's timbre alone, since the GUI collects no transcript of it.
+        """
+        import numpy as np      # type: ignore
+        import lameenc          # type: ignore
+
+        need_clone = self.qwen_clone_audio is not None
+        model = self._get_qwen_model(need_clone)
+        lang  = QWEN_LANGUAGE_MAP.get((self.translate_to or "de").split("-")[0].lower(), "German")
+
+        if need_clone:
+            wavs, sample_rate = model.generate_voice_clone(
+                text=text, language=lang,
+                ref_audio=str(self.qwen_clone_audio),
+                x_vector_only_mode=True,
+            )
+        else:
+            wavs, sample_rate = model.generate_custom_voice(
+                text=text, language=lang, speaker=self.qwen_voice,
+            )
+        if not wavs:
+            raise RuntimeError("Qwen3-TTS lieferte keine Audio-Daten.")
+
+        # wavs[0] is documented as a numpy float array in [-1, 1]; TTS output
+        # is mono, but flatten defensively in case of a stray (1, N) shape.
+        audio = np.asarray(wavs[0]).reshape(-1)
+        pcm16 = (np.clip(audio, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
+
+        enc = lameenc.Encoder()
+        enc.set_bit_rate(128)
+        enc.set_in_sample_rate(sample_rate)
+        enc.set_channels(1)
+        enc.set_quality(2)   # 2 = highest quality (LAME preset)
+        mp3_data = enc.encode(pcm16) + enc.flush()
+        out_path.write_bytes(mp3_data)
+
+        if out_path.stat().st_size < 512:
+            out_path.unlink(missing_ok=True)
+            raise RuntimeError("Qwen3-TTS: MP3-Ausgabe ist leer.")
+
+        # Qwen3-TTS has no native speed parameter (unlike Edge/Piper) -
+        # apply the rate slider as an ffmpeg atempo post-process instead.
+        tempo = _rate_to_tempo_factor(rate)
+        ffmpeg = self._ffmpeg_path()
+        if tempo != 1.0 and ffmpeg:
+            tmp_out = out_path.with_suffix(".tempo.mp3")
+            result = subprocess.run(
+                [
+                    ffmpeg, "-y", "-i", str(out_path),
+                    "-filter:a", f"atempo={tempo}",
+                    "-c:a", "libmp3lame", "-b:a", "128k",
+                    str(tmp_out),
+                ],
+                capture_output=True,
+            )
+            if result.returncode == 0 and tmp_out.exists() and tmp_out.stat().st_size > 0:
+                tmp_out.replace(out_path)
+            else:
+                tmp_out.unlink(missing_ok=True)
+
+        return sample_rate
+
+    # ------------------------------------------------------------------
+    async def _synthesise_chunk_qwen_spliced(
+        self, segments: list[dict], out_path: Path,
+        log: "HtmlLog | None" = None,
+    ) -> None:
+        """
+        Synthesise a chunk with Qwen3-TTS, one piece per paragraph/heading,
+        spliced together with real silence gaps (ffmpeg) - the same approach
+        _synthesise_chunk_piper_spliced() uses, reusing plan_audio_pieces()
+        since Qwen3-TTS (like Edge/Piper) has no reliable inline pause markup.
+        """
+        pieces = plan_audio_pieces(segments, self.rate)
+        tts_pieces = [p for p in pieces if p["kind"] == "tts"]
+        if not tts_pieces:
+            return
+        self._save_optimized_debug_text(pieces, out_path)
+
+        tmp_dir = out_path.parent / f".tmp_{out_path.stem}"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            # Two passes: Qwen's sample rate is only known after the first
+            # synthesis call, but silence clips need to match it exactly
+            # for ffmpeg's stream-copy concat to work.
+            resolved: list[Path | None] = [None] * len(pieces)
+            sample_rate = 24000  # overwritten below once the first piece is synthesised
+            for idx, piece in enumerate(pieces):
+                if piece["kind"] != "tts":
+                    continue
+                part_path = tmp_dir / f"{idx:04d}.mp3"
+                sample_rate = await self._synthesise_piece_qwen(piece["text"], piece["rate"], part_path)
+                resolved[idx] = part_path
+
+            part_paths: list[Path] = []
+            for idx, piece in enumerate(pieces):
+                if piece["kind"] == "silence":
+                    part_paths.append(self._get_silence_clip(piece["ms"], sample_rate=sample_rate))
+                else:
+                    part_paths.append(resolved[idx])
+
+            if not self._concat_mp3_ffmpeg(part_paths, out_path):
+                raise RuntimeError("Zusammenfügen der Segment-Audios via ffmpeg fehlgeschlagen.")
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # ------------------------------------------------------------------
     async def _synthesise_chunk(
         self, segments: list[dict], out_path: Path,
         log: "HtmlLog | None" = None,
@@ -1371,6 +1577,11 @@ class EpubConverter:
                 await self._synthesise_chunk_piper_spliced(segments, out_path, log=log)
             else:
                 await self._synthesise_chunk_piper_legacy(segments, out_path, log=log)
+        elif self.tts_engine == "qwen":
+            if self.optimize_before_reading and self._ffmpeg_path():
+                await self._synthesise_chunk_qwen_spliced(segments, out_path, log=log)
+            else:
+                await self._synthesise_chunk_qwen_legacy(segments, out_path, log=log)
         else:
             if self.optimize_before_reading:
                 await self._synthesise_chunk_edge(segments, out_path, log=log)
@@ -1610,6 +1821,36 @@ class EpubConverter:
                 )
                 sys.exit(1)
 
+        # Preflight: check qwen-tts + torch + lameenc are installed when Qwen engine is selected
+        if self.tts_engine == "qwen":
+            missing = []
+            try:
+                import torch  # noqa: F401
+            except ImportError:
+                missing.append("torch")
+            try:
+                from qwen_tts import Qwen3TTSModel  # noqa: F401
+            except ImportError:
+                missing.append("qwen-tts")
+            try:
+                import lameenc  # noqa: F401
+            except ImportError:
+                missing.append("lameenc")
+            if missing:
+                print(
+                    f"❌  Fehlende Pakete für Qwen3-TTS: {', '.join(missing)}\n"
+                    "    Bitte ausführen:  pip install qwen-tts lameenc\n"
+                    "    Oder Edge/Piper TTS in der GUI wählen.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            if self.qwen_clone_audio and not self.qwen_clone_audio.exists():
+                print(
+                    f"❌  Referenzaudio für Voice-Cloning nicht gefunden: {self.qwen_clone_audio}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
         self.output_dir.mkdir(parents=True, exist_ok=True)
         chapters, book_title = self._load_chapters()
 
@@ -1672,10 +1913,15 @@ class EpubConverter:
 
         # --- Open HTML log ---
         log_path = self.output_dir / f"{safe_book}_protokoll.html"
-        engine_label = (
-            f"Piper ({self.piper_voice})" if self.tts_engine == "piper"
-            else f"Edge ({self.voice})"
-        )
+        if self.tts_engine == "piper":
+            engine_label = f"Piper ({self.piper_voice})"
+        elif self.tts_engine == "qwen":
+            engine_label = (
+                f"Qwen3-TTS (Cloning: {self.qwen_clone_audio.name})" if self.qwen_clone_audio
+                else f"Qwen3-TTS ({self.qwen_voice})"
+            )
+        else:
+            engine_label = f"Edge ({self.voice})"
         log = HtmlLog(log_path, book_title, {
             "Engine":  engine_label,
             "Rate":    self.rate,
@@ -1689,6 +1935,9 @@ class EpubConverter:
         log.log(f"📄  Eingabe:   {self.epub_path.name}  [{file_type}]", "dim")
         if self.tts_engine == "piper":
             log.log(f"🔊  Engine:    Piper TTS (offline)  |  Stimme: {self.piper_voice}  |  Rate: {self.rate}", "info")
+        elif self.tts_engine == "qwen":
+            voice_desc = f"Cloning ({self.qwen_clone_audio.name})" if self.qwen_clone_audio else self.qwen_voice
+            log.log(f"🔊  Engine:    Qwen3-TTS (offline, KI)  |  Stimme: {voice_desc}  |  Rate: {self.rate}", "info")
         else:
             log.log(f"🔊  Engine:    Edge TTS  |  Stimme: {self.voice}  |  Rate: {self.rate}  |  Vol: {self.volume}", "info")
         log.log(f"📂  Ausgabe:   {self.output_dir}", "dim")
@@ -2420,10 +2669,20 @@ Examples:
                         help='Translate text to this language before TTS, e.g. "de" for German (requires deep_translator)')
     parser.add_argument("--resume", action="store_true",
                         help='Resume interrupted conversion: skip splits whose audio file already exists')
-    parser.add_argument("--tts-engine", default="edge", choices=["edge", "piper"],
-                        help='TTS engine: "edge" (online, Microsoft) or "piper" (offline, local)')
+    parser.add_argument("--tts-engine", default="edge", choices=["edge", "piper", "qwen"],
+                        help='TTS engine: "edge" (online, Microsoft), "piper" (offline, local) '
+                             'or "qwen" (offline, local, AI-based)')
     parser.add_argument("--piper-voice", default="de_DE-thorsten-high",
                         help='Piper voice name, e.g. "de_DE-thorsten-high" or "en_US-amy-medium"')
+    parser.add_argument("--qwen-voice", default=QWEN_DEFAULT_VOICE,
+                        help=f'Qwen3-TTS preset speaker (default: {QWEN_DEFAULT_VOICE}). '
+                             f'Options: {", ".join(QWEN_SPEAKERS)}')
+    parser.add_argument("--qwen-clone-audio", default=None,
+                        help='Path to a reference WAV for Qwen3-TTS voice cloning '
+                             '(overrides --qwen-voice; uses the Base model instead of CustomVoice)')
+    parser.add_argument("--qwen-model-dir", default=None,
+                        help='Custom directory for cached Qwen3-TTS model weights '
+                             '(default: Hugging Face\'s own cache)')
     parser.add_argument("--no-normalize-volume", action="store_false", dest="normalize_volume",
                         default=True,
                         help='Disable loudness normalization between chapters (requires ffmpeg; on by default)')
@@ -2494,6 +2753,9 @@ def main() -> None:
         resume        = args.resume,
         tts_engine    = args.tts_engine,
         piper_voice   = args.piper_voice,
+        qwen_voice        = args.qwen_voice,
+        qwen_clone_audio  = args.qwen_clone_audio,
+        qwen_model_dir    = args.qwen_model_dir,
         normalize_volume = args.normalize_volume,
         save_log      = args.save_log,
         optimize_before_reading = args.optimize_before_reading,

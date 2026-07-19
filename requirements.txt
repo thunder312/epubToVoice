@@ -11,7 +11,10 @@ deep_translator>=1.11.4 # Translation via Google Translate (optional; required f
 python-docx>=1.1        # DOCX / DOC reading (optional; required for Word files)
 # pywin32>=306          # DOC conversion via Word COM on Windows (optional; install if .doc support needed)
 piper-tts>=1.2          # Offline TTS engine (optional; required for Piper engine support)
-lameenc>=1.7            # MP3 encoder for Piper output (optional; required for Piper engine support)
+lameenc>=1.7            # MP3 encoder for Piper output (optional; required for Piper/Qwen engine support)
+qwen-tts>=0.1.1         # Offline, AI-based TTS engine (optional; required for Qwen3-TTS engine support)
+torch>=2.1              # Qwen3-TTS model runtime (optional; required for Qwen3-TTS engine support)
+huggingface_hub>=0.20   # Model download/caching for Qwen3-TTS (optional; pulled in by qwen-tts, listed explicitly)
 
 # System dependency (not a pip package): ffmpeg must be on PATH for
 # --merge (proper MP3 concatenation) and loudness normalization between

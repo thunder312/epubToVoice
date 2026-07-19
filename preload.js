@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('api', {
   openFiles:    ()    => ipcRenderer.invoke('dialog:openFiles'),
   openFolder:   ()    => ipcRenderer.invoke('dialog:openFolder'),
   openOutput:   ()    => ipcRenderer.invoke('dialog:openOutput'),
+  openAudioFile: ()   => ipcRenderer.invoke('dialog:openAudioFile'),
 
   // Resolve dropped paths (files or folders → epub list)
   resolvePaths: paths => ipcRenderer.invoke('resolve-paths', paths),

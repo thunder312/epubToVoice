@@ -135,6 +135,17 @@ ipcMain.handle('dialog:openOutput', async () => {
   return canceled ? null : filePaths[0];
 });
 
+ipcMain.handle('dialog:openAudioFile', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    title: 'Referenzaudio für Voice-Cloning auswählen',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Audio', extensions: ['wav', 'mp3', 'flac', 'm4a', 'ogg'] },
+    ],
+  });
+  return canceled ? null : filePaths[0];
+});
+
 // ---------------------------------------------------------------------------
 // IPC – resolve drag-and-drop paths (files or folders)
 // ---------------------------------------------------------------------------
@@ -233,7 +244,7 @@ ipcMain.handle('load-voices', async () => {
         if (err.includes('No module named')) {
           msg = `Abhängigkeiten fehlen. Bitte ausführen:\n  pip install -r requirements.txt`;
         } else if (err.includes('getaddrinfo') || err.includes('ClientConnectorDNSError') || err.includes('Cannot connect to host')) {
-          msg = `Edge TTS: Kein Internetzugang oder speech.platform.bing.com nicht erreichbar.\nStimmen können offline nicht geladen werden.\n→ Piper TTS (offline) als Alternative wählen.`;
+          msg = `Edge TTS: Kein Internetzugang oder speech.platform.bing.com nicht erreichbar.\nStimmen können offline nicht geladen werden.\n→ Piper TTS oder Qwen3-TTS (beide offline) als Alternative wählen.`;
         } else {
           msg = err.trim() || 'Stimmen konnten nicht geladen werden';
         }
@@ -321,7 +332,7 @@ ipcMain.handle('detect-language', async (event, filePath) => {
 
 const activeJobs = new Map(); // jobId → ChildProcess
 
-ipcMain.handle('demo-voice', async (event, { ttsEngine, voice, rate, volume, piperVoice }) => {
+ipcMain.handle('demo-voice', async (event, { ttsEngine, voice, rate, volume, piperVoice, qwenVoice, qwenCloneAudio, qwenModelDir }) => {
   const cmd = await getPython();
   if (!cmd) return { error: 'Python nicht gefunden' };
 
@@ -339,6 +350,11 @@ ipcMain.handle('demo-voice', async (event, { ttsEngine, voice, rate, volume, pip
   if (ttsEngine === 'piper') {
     args.push('--tts-engine=piper');
     if (piperVoice) args.push(`--piper-voice=${piperVoice}`);
+  } else if (ttsEngine === 'qwen') {
+    args.push('--tts-engine=qwen');
+    if (qwenCloneAudio)     args.push(`--qwen-clone-audio=${qwenCloneAudio}`);
+    else if (qwenVoice)     args.push(`--qwen-voice=${qwenVoice}`);
+    if (qwenModelDir)       args.push(`--qwen-model-dir=${qwenModelDir}`);
   } else if (voice) {
     args.push('-v', voice);
   }
@@ -367,7 +383,8 @@ ipcMain.handle('demo-voice', async (event, { ttsEngine, voice, rate, volume, pip
 
 ipcMain.handle('start-conversion', async (event, opts) => {
   const { jobId, epubPath, outputDir, voice, rate, volume, skipShort, maxChapters, merge, createZip,
-          startPage, endPage, skipChapters, translateTo, resume, ttsEngine, piperVoice, normalizeVolume, saveLog,
+          startPage, endPage, skipChapters, translateTo, resume, ttsEngine, piperVoice,
+          qwenVoice, qwenCloneAudio, qwenModelDir, normalizeVolume, saveLog,
           optimizeBeforeReading } = opts;
 
   const cmd = await getPython();
@@ -388,6 +405,11 @@ ipcMain.handle('start-conversion', async (event, opts) => {
   if (resume)                              args.push('--resume');
   if (ttsEngine && ttsEngine !== 'edge')   args.push(`--tts-engine=${ttsEngine}`);
   if (piperVoice)                          args.push(`--piper-voice=${piperVoice}`);
+  if (ttsEngine === 'qwen') {
+    if (qwenCloneAudio)     args.push(`--qwen-clone-audio=${qwenCloneAudio}`);
+    else if (qwenVoice)     args.push(`--qwen-voice=${qwenVoice}`);
+    if (qwenModelDir)       args.push(`--qwen-model-dir=${qwenModelDir}`);
+  }
   if (normalizeVolume === false)           args.push('--no-normalize-volume');
   if (saveLog)                             args.push('--save-log');
   if (optimizeBeforeReading === false)     args.push('--no-optimize-before-reading');
@@ -452,7 +474,7 @@ ipcMain.handle('start-conversion', async (event, opts) => {
         resolve({ success: true, outputPath });
       } else {
         let errMsg = `Python exited with code ${code}`;
-        if (stderrBuf.includes('piper-tts') || stderrBuf.includes('No module named')) {
+        if (stderrBuf.includes('piper-tts') || stderrBuf.includes('qwen-tts') || stderrBuf.includes('No module named')) {
           errMsg = stderrBuf.trim();
         }
         resolve({ success: false, error: errMsg, exitCode: code });

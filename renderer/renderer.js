@@ -22,9 +22,14 @@ const settings = {
   volume:      '+0%',
   skipShort:   60,
   translateTo: null,   // e.g. 'de' when translation is enabled
-  ttsEngine:   'edge', // 'edge' or 'piper'
+  ttsEngine:   'edge', // 'edge', 'piper' or 'qwen'
   piperVoice:  'de_DE-thorsten-high',
+  qwenVoice:      'Vivian',
+  qwenCloneAudio: '',   // path to reference WAV, or '' for preset-voice mode
 };
+
+// Preset speakers of the Qwen3-TTS CustomVoice model (see QWEN_SPEAKERS in epub_to_voice.py)
+const QWEN_SPEAKERS = ['Vivian', 'Serena', 'Uncle_Fu', 'Dylan', 'Eric', 'Ryan', 'Aiden', 'Ono_Anna', 'Sohee'];
 
 // ---------------------------------------------------------------------------
 // DOM refs
@@ -65,8 +70,15 @@ const btnClear     = $('btnClearQueue');
 async function init() {
   checkPython();
   loadVoices();
+  populateQwenVoiceSelect();
   bindEvents();
   renderTemplateOptions();
+}
+
+function populateQwenVoiceSelect() {
+  const select = $('qwenVoiceSelect');
+  select.innerHTML = QWEN_SPEAKERS.map(s => `<option value="${s}">${s}</option>`).join('');
+  select.value = settings.qwenVoice;
 }
 
 async function checkPython() {
@@ -142,17 +154,20 @@ async function playVoiceDemo() {
 
   if (demoAudio) { demoAudio.pause(); demoAudio = null; }
 
-  const btn = $(engine === 'piper' ? 'btnDemoVoicePiper' : 'btnDemoVoice');
+  const btnId = engine === 'piper' ? 'btnDemoVoicePiper' : engine === 'qwen' ? 'btnDemoVoiceQwen' : 'btnDemoVoice';
+  const btn = $(btnId);
   demoStatus.textContent = '⏳ Stimme wird generiert…';
   demoStatus.className   = 'demo-status loading';
   btn.disabled = true;
 
   const result = await window.api.demoVoice({
-    ttsEngine:  engine,
-    voice:      settings.voice,
-    piperVoice: settings.piperVoice,
-    rate:       settings.rate,
-    volume:     settings.volume,
+    ttsEngine:      engine,
+    voice:          settings.voice,
+    piperVoice:     settings.piperVoice,
+    qwenVoice:      settings.qwenVoice,
+    qwenCloneAudio: settings.qwenCloneAudio || null,
+    rate:           settings.rate,
+    volume:         settings.volume,
   });
   btn.disabled = false;
 
@@ -496,8 +511,10 @@ function bindEvents() {
     radio.addEventListener('change', () => {
       settings.ttsEngine = radio.value;
       const isPiper = radio.value === 'piper';
-      $('edgeVoicePanel').style.display  = isPiper ? 'none' : '';
+      const isQwen  = radio.value === 'qwen';
+      $('edgeVoicePanel').style.display  = (isPiper || isQwen) ? 'none' : '';
       $('piperVoicePanel').style.display = isPiper ? '' : 'none';
+      $('qwenVoicePanel').style.display  = isQwen  ? '' : 'none';
     });
   });
   $('piperVoiceInput').addEventListener('input', () => {
@@ -509,6 +526,27 @@ function bindEvents() {
     window.api.revealPath('https://huggingface.co/rhasspy/piper-voices/tree/main');
   });
 
+  // Qwen3-TTS voice picker
+  $('qwenVoiceSelect').addEventListener('change', () => {
+    settings.qwenVoice = $('qwenVoiceSelect').value;
+  });
+  $('chkQwenClone').addEventListener('change', () => {
+    const enabled = $('chkQwenClone').checked;
+    $('qwenCloneRow').style.display    = enabled ? '' : 'none';
+    $('qwenVoiceSelect').disabled      = enabled;
+    if (!enabled) {
+      settings.qwenCloneAudio = '';
+      $('qwenCloneAudioInput').value = '';
+    }
+  });
+  $('btnBrowseQwenClone').addEventListener('click', async () => {
+    const filePath = await window.api.openAudioFile();
+    if (filePath) {
+      settings.qwenCloneAudio = filePath;
+      $('qwenCloneAudioInput').value = filePath;
+    }
+  });
+
   btnStart.addEventListener('click',   () => startConversion(false));
   btnPreview.addEventListener('click', () => startConversion(true));
   btnCancel.addEventListener('click',  cancelConversion);
@@ -516,9 +554,10 @@ function bindEvents() {
     if (!isConverting) { queue = []; renderQueue(); }
   });
 
-  // Voice demo (both engines)
+  // Voice demo (all engines)
   $('btnDemoVoice').addEventListener('click', playVoiceDemo);
   $('btnDemoVoicePiper').addEventListener('click', playVoiceDemo);
+  $('btnDemoVoiceQwen').addEventListener('click', playVoiceDemo);
 
   // Voice/speed templates
   $('templateSelect').addEventListener('change', () => {
@@ -598,6 +637,7 @@ function saveTemplateFromModal() {
     ttsEngine:  settings.ttsEngine,
     voice:      settings.voice,
     piperVoice: settings.piperVoice,
+    qwenVoice:  settings.qwenVoice,
     rate:       settings.rate,
     volume:     settings.volume,
   };
@@ -621,6 +661,13 @@ function applyTemplate(t) {
   if (t.ttsEngine === 'piper') {
     $('piperVoiceInput').value = t.piperVoice || '';
     $('piperVoiceInput').dispatchEvent(new Event('input'));
+  } else if (t.ttsEngine === 'qwen') {
+    // Voice-cloning reference audio is a machine-specific path and is not
+    // saved in templates - templates always restore preset-voice mode.
+    $('chkQwenClone').checked = false;
+    $('chkQwenClone').dispatchEvent(new Event('change'));
+    $('qwenVoiceSelect').value = t.qwenVoice || settings.qwenVoice;
+    $('qwenVoiceSelect').dispatchEvent(new Event('change'));
   } else {
     voiceInput.value = t.voice || '';
     voiceInput.dispatchEvent(new Event('input'));
@@ -924,7 +971,9 @@ async function startConversion(previewMode = false) {
 
     currentJobId = job.id;
     job.status   = 'processing';
-    job.subText  = settings.ttsEngine === 'piper' ? 'Piper TTS läuft…' : 'Verbinde mit Edge TTS…';
+    job.subText  = settings.ttsEngine === 'piper' ? 'Piper TTS läuft…'
+                  : settings.ttsEngine === 'qwen' ? 'Qwen3-TTS läuft…'
+                  : 'Verbinde mit Edge TTS…';
     renderQueue();
     updateJobEl(job);
 
@@ -946,6 +995,8 @@ async function startConversion(previewMode = false) {
       resume:       job.resume || false,
       ttsEngine:    settings.ttsEngine,
       piperVoice:   settings.piperVoice,
+      qwenVoice:      settings.qwenVoice,
+      qwenCloneAudio: settings.qwenCloneAudio || null,
       saveLog:      settings.saveLog,
       optimizeBeforeReading: settings.optimizeBeforeReading,
     };
