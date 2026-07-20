@@ -16,7 +16,9 @@ Usage:
 
 import asyncio
 import argparse
+import contextlib
 import html as _html
+import io
 import json
 import re
 import shutil
@@ -55,6 +57,11 @@ QWEN_LANGUAGE_MAP = {
     "ko": "Korean", "fr": "French", "ru": "Russian", "pt": "Portuguese",
     "es": "Spanish", "it": "Italian",
 }
+# Loaded Qwen3-TTS model instances, keyed by "<model_id>::<cache_dir>". Kept at
+# module level (not per-EpubConverter) so a long-lived process - see
+# qwen_server_cmd() - only loads each model once no matter how many requests
+# it serves.
+_QWEN_MODEL_CACHE: dict = {}
 
 # A few recommended alternative voices (see --list-voices for the full,
 # regularly-updated catalog of all Edge TTS languages/voices):
@@ -753,8 +760,6 @@ class EpubConverter:
         self.save_log         = save_log
         self.optimize_before_reading = optimize_before_reading
         self._piper_instance  = None   # lazy-loaded
-        self._qwen_customvoice_instance = None   # lazy-loaded (preset speakers)
-        self._qwen_base_instance        = None   # lazy-loaded (voice cloning)
 
     @property
     def _audio_ext(self) -> str:
@@ -1416,23 +1421,30 @@ class EpubConverter:
         Both are downloaded from Hugging Face on first use (like Piper's
         model download, but via the qwen_tts/transformers HF cache instead
         of a manual urlretrieve - see _ensure_piper_model()).
-        """
-        attr = "_qwen_base_instance" if need_clone else "_qwen_customvoice_instance"
-        if getattr(self, attr) is None:
-            import torch                       # type: ignore
-            from qwen_tts import Qwen3TTSModel  # type: ignore
 
-            model_id = QWEN_BASE_MODEL if need_clone else QWEN_CUSTOMVOICE_MODEL
-            device   = "cuda:0" if torch.cuda.is_available() else "cpu"
-            dtype    = torch.bfloat16 if device.startswith("cuda") else torch.float32
+        Cached at module level (keyed by model id + cache dir) rather than on
+        self, so that repeated EpubConverter instances within the same
+        process - as created per request by qwen_server_cmd() - reuse an
+        already-loaded model instead of paying the multi-second load cost
+        again on every request.
+        """
+        import torch                       # type: ignore
+        from qwen_tts import Qwen3TTSModel  # type: ignore
+
+        model_id  = QWEN_BASE_MODEL if need_clone else QWEN_CUSTOMVOICE_MODEL
+        cache_key = f"{model_id}::{self.qwen_model_dir or ''}"
+
+        if cache_key not in _QWEN_MODEL_CACHE:
+            device = "cuda:0" if torch.cuda.is_available() else "cpu"
+            dtype  = torch.bfloat16 if device.startswith("cuda") else torch.float32
 
             kwargs: dict = {"device_map": device, "dtype": dtype}
             if self.qwen_model_dir:
                 kwargs["cache_dir"] = str(self.qwen_model_dir)
 
             print(f"  🔊  Initialisiere Qwen3-TTS: {model_id} ({device}) …", flush=True)
-            setattr(self, attr, Qwen3TTSModel.from_pretrained(model_id, **kwargs))
-        return getattr(self, attr)
+            _QWEN_MODEL_CACHE[cache_key] = Qwen3TTSModel.from_pretrained(model_id, **kwargs)
+        return _QWEN_MODEL_CACHE[cache_key]
 
     # ------------------------------------------------------------------
     async def _synthesise_chunk_qwen_legacy(
@@ -2617,6 +2629,65 @@ def detect_language_cmd(file_path: str) -> None:
 # CLI
 # ---------------------------------------------------------------------------
 
+async def qwen_server_cmd(qwen_model_dir: str | None) -> None:
+    """
+    Persistent worker used by the GUI's Qwen3-TTS demo/play button.
+
+    Electron normally spawns a fresh 'python epub_to_voice.py …' process per
+    demo click, which means _get_qwen_model() reloads the model from disk
+    into memory every single time (multi-second cost even though the weights
+    are already downloaded). This mode instead keeps ONE process - and its
+    module-level _QWEN_MODEL_CACHE - alive for as long as the GUI wants,
+    serving one JSON request per stdin line and replying with one JSON
+    response per stdout line, so only the first request pays the load cost.
+
+    Request line:  {"epubPath": str, "outputDir": str, "rate": str, "volume": str,
+                     "qwenVoice": str, "qwenCloneAudio": str|null, "qwenModelDir": str|null}
+    Response line: {"ok": true} or {"ok": false, "error": str}
+
+    Runs until stdin is closed (i.e. the parent Electron process kills it,
+    typically on app quit).
+    """
+    print(json.dumps({"ready": True}), flush=True)
+    loop = asyncio.get_event_loop()
+
+    while True:
+        line = await loop.run_in_executor(None, sys.stdin.readline)
+        if not line:
+            break  # stdin closed → parent went away
+        line = line.strip()
+        if not line:
+            continue
+
+        out_buf, err_buf = io.StringIO(), io.StringIO()
+        try:
+            req = json.loads(line)
+            converter = EpubConverter(
+                epub_path        = req["epubPath"],
+                output_dir       = req["outputDir"],
+                merge            = True,
+                skip_short       = 0,
+                tts_engine       = "qwen",
+                rate             = req.get("rate") or DEFAULT_RATE,
+                volume           = req.get("volume") or DEFAULT_VOLUME,
+                qwen_voice       = req.get("qwenVoice") or QWEN_DEFAULT_VOICE,
+                qwen_clone_audio = req.get("qwenCloneAudio") or None,
+                qwen_model_dir   = req.get("qwenModelDir") or qwen_model_dir,
+            )
+            # convert() prints lots of progress lines (and calls sys.exit()
+            # with a message on sys.stderr on preflight failures) - none of
+            # that may reach the real stdout/stderr, since stdout is reserved
+            # for the one JSON response line per request.
+            with contextlib.redirect_stdout(out_buf), contextlib.redirect_stderr(err_buf):
+                await converter.convert()
+            print(json.dumps({"ok": True}), flush=True)
+        except SystemExit as exc:
+            error = err_buf.getvalue().strip() or out_buf.getvalue().strip() or f"Exit code {exc.code}"
+            print(json.dumps({"ok": False, "error": error}), flush=True)
+        except Exception as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}), flush=True)
+
+
 async def list_voices_cmd(filter_str: str = "") -> None:
     voices   = await edge_tts.list_voices()
     filtered = [v for v in voices if filter_str.lower() in v["ShortName"].lower()] if filter_str else voices
@@ -2659,6 +2730,9 @@ Examples:
                         help='Detect the language of the input file and print JSON (used by GUI)')
     parser.add_argument("--get-structure",    action="store_true",
                         help='Extract document structure (chapters/pages) and print JSON (used by GUI)')
+    parser.add_argument("--qwen-server",      action="store_true",
+                        help='Run as a persistent worker that keeps the Qwen3-TTS model warm in memory '
+                             'and serves JSON-lines requests on stdin/stdout (used by GUI demo button)')
     parser.add_argument("--start-page",  type=int, default=None,
                         help='PDF: first page to convert (1-based, default: 1)')
     parser.add_argument("--end-page",    type=int, default=None,
@@ -2706,6 +2780,10 @@ def main() -> None:
 
     if args.list_voices is not None:
         asyncio.run(list_voices_cmd(args.list_voices))
+        return
+
+    if args.qwen_server:
+        asyncio.run(qwen_server_cmd(args.qwen_model_dir))
         return
 
     if args.detect_language:

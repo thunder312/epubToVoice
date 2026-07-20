@@ -332,10 +332,90 @@ ipcMain.handle('detect-language', async (event, filePath) => {
 
 const activeJobs = new Map(); // jobId → ChildProcess
 
-ipcMain.handle('demo-voice', async (event, { ttsEngine, voice, rate, volume, piperVoice, qwenVoice, qwenCloneAudio, qwenModelDir }) => {
-  const cmd = await getPython();
-  if (!cmd) return { error: 'Python nicht gefunden' };
+// ---------------------------------------------------------------------------
+// Qwen3-TTS warm worker
+//
+// Every conversion job still spawns a plain one-shot Python process (fine -
+// long-running jobs barely notice a few extra seconds of model load time).
+// The demo/play button is different: it's clicked repeatedly in quick
+// succession while auditioning a voice, and a fresh process there means
+// reloading the ~0.6B-parameter model from disk every single click. This
+// worker is spawned lazily on the first Qwen demo request and then kept
+// alive (holding the model warm in memory) for the rest of the app's
+// lifetime, so only that first click pays the load cost.
+// ---------------------------------------------------------------------------
 
+let qwenServerProc    = null;
+let qwenServerReady   = null;   // Promise<ChildProcess>, resolves once the worker signals {"ready": true}
+let qwenServerBuffer  = '';
+let qwenServerPending = [];     // FIFO of {resolve, reject} - one per line still expected on stdout
+let qwenServerQueue   = Promise.resolve(); // serializes requests over the single stdin/stdout channel
+
+function startQwenServer() {
+  return getPython().then(cmd => {
+    if (!cmd) throw new Error('Python nicht gefunden');
+
+    const proc = spawn(cmd, [getScriptPath(), '--qwen-server'], {
+      shell: false,
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+    });
+    qwenServerProc   = proc;
+    qwenServerBuffer = '';
+
+    proc.stdout.on('data', d => {
+      qwenServerBuffer += d.toString();
+      let idx;
+      while ((idx = qwenServerBuffer.indexOf('\n')) !== -1) {
+        const line = qwenServerBuffer.slice(0, idx).trim();
+        qwenServerBuffer = qwenServerBuffer.slice(idx + 1);
+        if (!line) continue;
+        const waiter = qwenServerPending.shift();
+        if (!waiter) continue;
+        try { waiter.resolve(JSON.parse(line)); }
+        catch (e) { waiter.reject(e); }
+      }
+    });
+
+    const onGone = () => {
+      const err = new Error('Qwen3-TTS-Hintergrundprozess wurde unerwartet beendet.');
+      qwenServerPending.splice(0).forEach(w => w.reject(err));
+      if (qwenServerProc === proc) { qwenServerProc = null; qwenServerReady = null; }
+    };
+    proc.on('exit', onGone);
+    proc.on('error', onGone);
+
+    return new Promise((resolve, reject) => {
+      qwenServerPending.push({
+        resolve: msg => (msg && msg.ready) ? resolve(proc) : reject(new Error('Unerwartete Antwort vom Qwen3-TTS-Prozess.')),
+        reject,
+      });
+    });
+  });
+}
+
+function getQwenServer() {
+  if (!qwenServerProc || qwenServerProc.killed) qwenServerReady = startQwenServer();
+  return qwenServerReady;
+}
+
+/** Send one demo-synthesis request to the warm Qwen worker; requests are queued and answered in order. */
+function qwenServerRequest(payload) {
+  const result = qwenServerQueue.then(async () => {
+    const proc = await getQwenServer();
+    return new Promise((resolve, reject) => {
+      qwenServerPending.push({ resolve, reject });
+      proc.stdin.write(JSON.stringify(payload) + '\n');
+    });
+  });
+  qwenServerQueue = result.catch(() => {}); // keep the queue alive even if this request failed
+  return result;
+}
+
+app.on('before-quit', () => {
+  if (qwenServerProc && !qwenServerProc.killed) qwenServerProc.kill();
+});
+
+ipcMain.handle('demo-voice', async (event, { ttsEngine, voice, rate, volume, piperVoice, qwenVoice, qwenCloneAudio, qwenModelDir }) => {
   // Reuse the real conversion pipeline (incl. pause-splicing) on the bundled
   // demo book, instead of a bespoke one-off synthesis path per engine.
   const demoDir = path.join(app.getPath('temp'), 'etv_demo');
@@ -344,17 +424,31 @@ ipcMain.handle('demo-voice', async (event, { ttsEngine, voice, rate, volume, pip
   const demoTxt = path.join(demoDir, 'demo.txt');
   fs.copyFileSync(getDemoTextPath(), demoTxt);
 
+  if (ttsEngine === 'qwen') {
+    try {
+      const resp = await qwenServerRequest({
+        epubPath: demoTxt, outputDir: demoDir, rate, volume,
+        qwenVoice, qwenCloneAudio, qwenModelDir,
+      });
+      if (!resp.ok) return { error: resp.error || 'Demo fehlgeschlagen' };
+      const mp3Name = fs.readdirSync(demoDir).find(f => f.toLowerCase().endsWith('.mp3'));
+      if (!mp3Name) return { error: 'Demo-Audio wurde nicht erzeugt.' };
+      const b64 = fs.readFileSync(path.join(demoDir, mp3Name)).toString('base64');
+      return { base64: b64 };
+    } catch (e) {
+      return { error: e.message };
+    }
+  }
+
+  const cmd = await getPython();
+  if (!cmd) return { error: 'Python nicht gefunden' };
+
   const args = [getScriptPath(), demoTxt, '-o', demoDir, '--merge', '--skip-short=0'];
   if (rate)                                args.push(`--rate=${rate}`);
   if (volume)                              args.push(`--volume=${volume}`);
   if (ttsEngine === 'piper') {
     args.push('--tts-engine=piper');
     if (piperVoice) args.push(`--piper-voice=${piperVoice}`);
-  } else if (ttsEngine === 'qwen') {
-    args.push('--tts-engine=qwen');
-    if (qwenCloneAudio)     args.push(`--qwen-clone-audio=${qwenCloneAudio}`);
-    else if (qwenVoice)     args.push(`--qwen-voice=${qwenVoice}`);
-    if (qwenModelDir)       args.push(`--qwen-model-dir=${qwenModelDir}`);
   } else if (voice) {
     args.push('-v', voice);
   }
