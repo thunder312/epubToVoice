@@ -19,6 +19,12 @@ torchaudio>=2.1         # Qwen3-TTS audio I/O (optional; required for Qwen3-TTS)
                          # `pip install qwen-tts` alone can pull a mismatched torchaudio and crash
                          # with "WinError 127" on import. Fix: pip install torchaudio==<torch version>.
 huggingface_hub>=0.20   # Model download/caching for Qwen3-TTS (optional; pulled in by qwen-tts, listed explicitly)
+numpy<2                 # Qwen3-TTS: torch's compiled extensions (as pulled in above) are built against
+                         # NumPy 1.x's C-ABI. NumPy 2.x installed alongside raises "Failed to initialize
+                         # NumPy: _ARRAY_API not found" on import and "Numpy is not available" at inference
+                         # time, silently producing 0 output splits. Fix: keep NumPy on the 1.x line.
+scipy<1.14              # Pulled in transitively (e.g. by librosa/qwen-tts) at a numpy>=2.0-only version;
+                         # pin to a release that still supports numpy<2 to avoid a resolver conflict.
 
 # System dependency (not a pip package): ffmpeg must be on PATH for
 # --merge (proper MP3 concatenation) and loudness normalization between
