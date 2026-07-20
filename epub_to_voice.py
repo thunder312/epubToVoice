@@ -1528,7 +1528,19 @@ class EpubConverter:
                 capture_output=True,
             )
             if result.returncode == 0 and tmp_out.exists() and tmp_out.stat().st_size > 0:
-                tmp_out.replace(out_path)
+                # On Windows a virus scanner or a sync client (e.g. Dropbox) can
+                # briefly hold a lock on the just-written file; retry the rename
+                # a few times before giving up - see _normalize_mp3_loudness(),
+                # which needed the same fix for the exact same reason.
+                for attempt in range(5):
+                    try:
+                        tmp_out.replace(out_path)
+                        break
+                    except OSError:
+                        if attempt == 4:
+                            tmp_out.unlink(missing_ok=True)  # give up - keep the untempo'd original
+                        else:
+                            time.sleep(0.2)
             else:
                 tmp_out.unlink(missing_ok=True)
 
