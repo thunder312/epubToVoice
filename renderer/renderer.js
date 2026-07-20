@@ -42,6 +42,7 @@ const queueEmpty   = $('queueEmpty');
 const queueCount   = $('queueCount');
 const logOutput    = $('logOutput');
 const logDetails   = $('logDetails');
+const btnClearLog  = $('btnClearLog');
 const pythonBadge  = $('pythonBadge');
 const voiceStatus   = $('voiceStatus');
 const voiceRow      = $('voiceRow');
@@ -553,6 +554,11 @@ function bindEvents() {
   btnClear.addEventListener('click',   () => {
     if (!isConverting) { queue = []; renderQueue(); }
   });
+  btnClearLog.addEventListener('click', (e) => {
+    e.preventDefault();  // don't let the click also toggle the <details> open/closed
+    e.stopPropagation();
+    logOutput.innerHTML = '';
+  });
 
   // Voice demo (all engines)
   $('btnDemoVoice').addEventListener('click', playVoiceDemo);
@@ -683,7 +689,7 @@ async function addToQueue(epubPaths) {
   const newJobs = [];
   for (const p of epubPaths) {
     if (existing.has(p)) continue;
-    const job = { id: crypto.randomUUID(), path: p, name: baseName(p), status: 'queued', current: 0, total: 0, outputPath: null, subText: '', startPage: null, endPage: null, skipChapters: [], structure: null, resume: false };
+    const job = { id: crypto.randomUUID(), path: p, name: baseName(p), status: 'queued', current: 0, total: 0, outputPath: null, subText: '', startPage: null, endPage: null, skipChapters: [], structure: null, resume: false, startTime: null, splitTimestamps: [] };
     queue.push(job);
     newJobs.push(job);
   }
@@ -884,6 +890,9 @@ function buildJobEl(job) {
     ? `<span class="item-sel">✂ S.${job.startPage??'1'}–${job.endPage??'∞'}${job.skipChapters?.length ? ` · ${job.skipChapters.length} übersprungen` : ''}</span>`
     : '';
 
+  const etaMs  = job.status === 'processing' ? estimateRemainingMs(job) : null;
+  const etaHtml = etaMs != null ? `<div class="item-eta">⏱ noch ca. ${formatDuration(etaMs)}</div>` : '';
+
   el.innerHTML = `
     <div class="item-top">
       <span class="item-name" title="${escHtml(job.path)}">${escHtml(job.name)}</span>
@@ -900,6 +909,7 @@ function buildJobEl(job) {
       <div class="progress-bar" style="width:${pct}%"></div>
     </div>
     <div class="item-sub">${escHtml(job.subText || (job.status === 'queued' ? job.path : ''))}</div>
+    ${etaHtml}
     ${job.outputPath ? `
     <div class="item-actions">
       <button class="btn btn--secondary btn--sm" data-reveal="${escHtml(job.outputPath)}">📂 Öffnen</button>
@@ -946,6 +956,31 @@ function updateJobEl(job) {
 
 function getJob(id) { return queue.find(j => j.id === id); }
 
+/** Rough "time remaining" estimate, based on the average duration of the most recent splits. */
+function estimateRemainingMs(job) {
+  const times = job.splitTimestamps;
+  if (!times || !times.length || !job.total) return null;
+  const completed = times.length;
+  const remaining = job.total - completed;
+  if (remaining <= 0) return null;
+  // Average over the last few completions rather than the whole run, so a
+  // one-off slow first split (e.g. Qwen/Piper model load) doesn't skew it.
+  const windowSize      = Math.min(completed, 5);
+  const windowStartTime = completed > windowSize ? times[completed - windowSize - 1] : job.startTime;
+  const avgMs = (times[completed - 1] - windowStartTime) / windowSize;
+  return avgMs * remaining;
+}
+
+function formatDuration(ms) {
+  const totalSec = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) return `${h} Std. ${m} Min.`;
+  if (m > 0) return `${m} Min. ${s} Sek.`;
+  return `${s} Sek.`;
+}
+
 // ---------------------------------------------------------------------------
 // Conversion
 // ---------------------------------------------------------------------------
@@ -974,6 +1009,8 @@ async function startConversion(previewMode = false) {
     job.subText  = settings.ttsEngine === 'piper' ? 'Piper TTS läuft…'
                   : settings.ttsEngine === 'qwen' ? 'Qwen3-TTS läuft…'
                   : 'Verbinde mit Edge TTS…';
+    job.startTime       = Date.now();
+    job.splitTimestamps = [];
     renderQueue();
     updateJobEl(job);
 
@@ -1068,6 +1105,12 @@ function handleProgress(data) {
   if (progress) {
     j.current = progress.current;
     j.total   = progress.total;
+    // A "[current/total]" line carrying a ✓/✗/⏭ result marks that split as
+    // done (the same line without one of those just announces its start) -
+    // record it for the "time remaining" estimate.
+    if (line && /[✓✗⏭]/.test(line)) {
+      (j.splitTimestamps ??= []).push(Date.now());
+    }
   }
 
   // Update subtitle to current chapter line

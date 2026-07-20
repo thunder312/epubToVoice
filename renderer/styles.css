@@ -431,6 +431,12 @@ h1           { font-size: 16px; font-weight: 600; letter-spacing: .3px; }
   min-height: 16px;
 }
 
+.item-eta {
+  font-size: 11px;
+  color: var(--primary);
+  margin-top: 2px;
+}
+
 .item-actions {
   display: flex;
   gap: 6px;
@@ -446,6 +452,8 @@ h1           { font-size: 16px; font-weight: 600; letter-spacing: .3px; }
   flex-direction: column;
 }
 .log-summary {
+  display: flex;
+  align-items: center;
   padding: 8px 18px;
   font-size: 12px;
   font-weight: 600;
@@ -459,6 +467,8 @@ h1           { font-size: 16px; font-weight: 600; letter-spacing: .3px; }
 .log-summary::-webkit-details-marker { display: none; }
 .log-summary::before { content: '▸ '; font-size: 10px; }
 details[open] .log-summary::before { content: '▾ '; }
+.log-summary-text { flex: 1; }
+.log-summary .btn--sm { text-transform: none; letter-spacing: normal; font-weight: 500; }
 
 .log-output {
   flex: 1;
