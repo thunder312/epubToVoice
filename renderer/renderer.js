@@ -516,6 +516,13 @@ function bindEvents() {
       $('edgeVoicePanel').style.display  = (isPiper || isQwen) ? 'none' : '';
       $('piperVoicePanel').style.display = isPiper ? '' : 'none';
       $('qwenVoicePanel').style.display  = isQwen  ? '' : 'none';
+      if (isQwen) {
+        // Qwen3-TTS already produces natural pacing on its own - the paragraph/
+        // heading pause-splicing tends to sound choppy on this model, so it's
+        // off by default (the user can still re-enable it manually).
+        $('chkOptimizeBeforeReading').checked = false;
+        settings.optimizeBeforeReading = false;
+      }
     });
   });
   $('piperVoiceInput').addEventListener('input', () => {
