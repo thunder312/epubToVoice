@@ -36,7 +36,23 @@
       "Bash(rm -f \"C:\\\\Users\\\\dertl\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\D--Dropbox-Entwicklung-epubToVoice\\\\9ef7af73-2b17-46d7-b4f8-ab176b7837d8\\\\scratchpad\\\\test_default\\\\002_001_mybook.mp3\")",
       "Bash(PYTHONIOENCODING=utf-8 python epub_to_voice.py __TRACKED_VAR__/test_savelog/mybook.txt --merge --skip-short=0 --save-log)",
       "Bash(PYTHONIOENCODING=utf-8 python epub_to_voice.py __TRACKED_VAR__/test_customdir/mybook.txt -o __TRACKED_VAR__/test_customdir/chosen_output --merge --skip-short=0)",
-      "Bash(start \"\" \"dist/EPUB to Voice Setup 1.0.0.exe\")"
+      "Bash(start \"\" \"dist/EPUB to Voice Setup 1.0.0.exe\")",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:qwenlm-qwen3-tts.mintlify.app)",
+      "WebFetch(domain:mintlify.com)",
+      "Bash(git stash *)",
+      "Bash(pip show *)",
+      "Bash(PYTHONIOENCODING=utf-8 python \"C:\\\\Users\\\\dertl\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\D--Dropbox-Entwicklung-epubToVoice\\\\d6c30507-bc14-445a-9350-e7d7b99d9980\\\\scratchpad\\\\probe_qwen.py\")",
+      "Bash(HF_HUB_DISABLE_XET=1 PYTHONIOENCODING=utf-8 python \"C:\\\\Users\\\\dertl\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\D--Dropbox-Entwicklung-epubToVoice\\\\d6c30507-bc14-445a-9350-e7d7b99d9980\\\\scratchpad\\\\probe_qwen.py\")",
+      "Bash(nslookup us.aws.cdn.hf.co)",
+      "Bash(nslookup huggingface.co)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" https://huggingface.co)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" --max-time 10 https://us.aws.cdn.hf.co)",
+      "PowerShell(Get-DnsClientServerAddress *)",
+      "Bash(pip list *)",
+      "Bash(pip index *)",
+      "Bash(grep -rHm1 ^description: 'D:\\\\Dropbox\\\\Entwicklung\\\\epubToVoice/.claude/skills/*/SKILL.md')",
+      "Bash(node --experimental-global-webcrypto \"C:\\\\Users\\\\dertl\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\D--Dropbox-Entwicklung-epubToVoice\\\\4c857e83-dca2-40f4-bb04-e625fbf24c20\\\\scratchpad\\\\cdp_test.js\" \"ws://127.0.0.1:9222/devtools/page/0EC1796C98D3E9DC2AF10BF1C3FE848D\")"
     ]
   }
 }
