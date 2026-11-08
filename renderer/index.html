@@ -1,11 +1,13 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="de" data-eulenwerk="kreativ">
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; media-src data: blob:; img-src data: 'self'">
+        content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self'; media-src data: blob:; img-src data: 'self'">
   <title>EPUB to Voice</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>">
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="eulenwerk.css">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -15,7 +17,7 @@
   <!-- ── Header ─────────────────────────────────────────── -->
   <header class="app-header">
     <div class="header-left">
-      <span class="app-icon">📚</span>
+      <img src="assets/icon.svg" alt="" class="app-icon">
       <h1>EPUB to Voice</h1>
     </div>
     <div id="pythonBadge" class="badge badge--loading">Python wird geprüft…</div>
@@ -285,8 +287,14 @@
     </div>
 
   </div>
+  <footer class="ew-footer ">
+      <a class="ew-brand" href="https://daniel-ertl.de" target="_blank" rel="noopener"><svg class="ew-logo" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5 C11 12 16 13 24 13 C28 13 30 15 32 16 C34 15 36 13 40 13 C48 13 53 12 56 5"/><circle cx="22" cy="28" r="9"/><circle cx="42" cy="28" r="9"/><circle fill="currentColor" stroke="none" cx="22" cy="28" r="3.2"/><circle fill="currentColor" stroke="none" cx="42" cy="28" r="3.2"/><path d="M29.5 39 L32 42.5 L34.5 39"/><path d="M13 28 V48 C13 54 18 59 24 59 H40 C46 59 51 54 51 48 V28"/><path d="M19 40 C18.5 48 19.5 54 23 59"/><path d="M45 40 C45.5 48 44.5 54 41 59"/></svg>Ein Eulenwerk-Projekt</a>
+      <button type="button" class="ew-btn ew-btn--ghost ew-btn--sm" data-ew-about>Über EPUB to Voice</button>
+    </footer>
 </div>
 
 <script src="renderer.js"></script>
+<script src="eulenwerk-about.js"></script>
+<script src="eulenwerk-init.js"></script>
 </body>
 </html>

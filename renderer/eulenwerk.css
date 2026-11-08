@@ -1,0 +1,432 @@
+/* ==========================================================================
+   Eulenwerk Design-System  ·  eulenwerk.css  ·  v1.0
+   Ein Look für alle Projekte, nur die Akzentfarbe wechselt je Kategorie.
+
+   Einbindung:
+     <link rel="stylesheet" href="eulenwerk.css">
+     <html data-eulenwerk="organisation">   ← Kategorie setzen (s. u.)
+
+   Kategorien: organisation (Blau) · kreativ (Grün) · medien (Violett)
+               technik (Bernstein) · spielerei (Rosé) · alltag (Terrakotta)
+   Alle Klassen tragen das Präfix "ew-".
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. Tokens – neutral (Dark Mode, für alle Kategorien gleich)
+   -------------------------------------------------------------------------- */
+:root {
+  /* Flächen */
+  --ew-bg:            #121417;
+  --ew-surface:       #181b1f;
+  --ew-surface-2:     #1f2328;
+  --ew-surface-hover: #242930;
+  --ew-border:        #2a2f36;
+  --ew-border-strong: #3a4049;
+
+  /* Text */
+  --ew-text:          #e7e9ec;
+  --ew-text-muted:    #9aa3ad;
+  --ew-text-faint:    #6b7480;
+  --ew-text-on-accent:#0f1115;
+
+  /* Status (kategorieunabhängig) */
+  --ew-ok:            #3ecf8e;
+  --ew-warn:          #f0b429;
+  --ew-danger:        #f26d6d;
+  --ew-info:          #5b8def;
+
+  /* Typografie */
+  --ew-font-sans:     "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --ew-font-serif:    "Fraunces", ui-serif, Georgia, "Times New Roman", serif;
+  --ew-font-mono:     ui-monospace, "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  --ew-font-heading:  var(--ew-font-sans);     /* Kreativ überschreibt mit Serif */
+  --ew-heading-weight: 600;
+  --ew-text-size:     15px;
+  --ew-line:          1.55;
+
+  /* Maße */
+  --ew-radius-sm:     6px;
+  --ew-radius:        10px;
+  --ew-radius-lg:     14px;
+  --ew-space-1:       4px;
+  --ew-space-2:       8px;
+  --ew-space-3:       12px;
+  --ew-space-4:       16px;
+  --ew-space-5:       24px;
+  --ew-space-6:       32px;
+  --ew-space-7:       48px;
+  --ew-content-max:   1100px;
+  --ew-header-h:      56px;
+
+  --ew-shadow:        0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+  --ew-focus:         0 0 0 3px var(--ew-accent-soft), 0 0 0 1px var(--ew-accent);
+  --ew-transition:    140ms ease;
+
+  /* Fallback-Akzent (= Organisation), falls kein data-eulenwerk gesetzt ist */
+  --ew-accent:        #5b8def;
+  --ew-accent-hover:  #4a7ae0;
+  --ew-accent-soft:   #1b2a4a;
+  --ew-accent-light:  #8fb3ff;
+  --ew-category-name: "Organisation";
+}
+
+/* --------------------------------------------------------------------------
+   2. Kategorien – nur diese vier Werte ändern sich
+   -------------------------------------------------------------------------- */
+[data-eulenwerk="organisation"] {
+  --ew-accent: #5b8def; --ew-accent-hover: #4a7ae0;
+  --ew-accent-soft: #1b2a4a; --ew-accent-light: #8fb3ff;
+  --ew-category-name: "Organisation";
+}
+[data-eulenwerk="kreativ"] {
+  --ew-accent: #3ecf8e; --ew-accent-hover: #34b87d;
+  --ew-accent-soft: #1d3b2c; --ew-accent-light: #7fe3b4;
+  --ew-font-heading: var(--ew-font-serif);     /* Serif nur hier */
+  --ew-heading-weight: 500;
+  --ew-category-name: "Kreativ";
+}
+[data-eulenwerk="medien"] {
+  --ew-accent: #a78bfa; --ew-accent-hover: #916ff2;
+  --ew-accent-soft: #2b2350; --ew-accent-light: #c4b5fd;
+  --ew-category-name: "Medien";
+}
+[data-eulenwerk="technik"] {
+  --ew-accent: #f0b429; --ew-accent-hover: #d99f1e;
+  --ew-accent-soft: #3d2f10; --ew-accent-light: #ffd166;
+  --ew-category-name: "Haus & Technik";
+}
+[data-eulenwerk="spielerei"] {
+  --ew-accent: #f472b6; --ew-accent-hover: #e05aa0;
+  --ew-accent-soft: #3f1f33; --ew-accent-light: #f9a8d4;
+  --ew-category-name: "Spielerei";
+}
+[data-eulenwerk="alltag"] {
+  --ew-accent: #e8735a; --ew-accent-hover: #d4604a;
+  --ew-accent-soft: #3d2219; --ew-accent-light: #f5a08c;
+  --ew-category-name: "Alltag";
+}
+
+/* --------------------------------------------------------------------------
+   3. Basis
+   -------------------------------------------------------------------------- */
+*, *::before, *::after { box-sizing: border-box; }
+html { color-scheme: dark; -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--ew-bg);
+  color: var(--ew-text);
+  font-family: var(--ew-font-sans);
+  font-size: var(--ew-text-size);
+  line-height: var(--ew-line);
+  -webkit-font-smoothing: antialiased;
+}
+h1, h2, h3, h4 {
+  font-family: var(--ew-font-heading);
+  font-weight: var(--ew-heading-weight);
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  margin: 0 0 var(--ew-space-3);
+  color: var(--ew-text);
+}
+h1 { font-size: 1.9rem; }
+h2 { font-size: 1.45rem; }
+h3 { font-size: 1.15rem; }
+h4 { font-size: 1rem; }
+p  { margin: 0 0 var(--ew-space-4); }
+a  { color: var(--ew-accent-light); text-decoration: none; }
+a:hover { text-decoration: underline; }
+small, .ew-muted { color: var(--ew-text-muted); }
+.ew-faint { color: var(--ew-text-faint); }
+code, kbd, pre { font-family: var(--ew-font-mono); font-size: .9em; }
+code, kbd { background: var(--ew-surface-2); border: 1px solid var(--ew-border); border-radius: var(--ew-radius-sm); padding: .1em .4em; }
+pre { background: var(--ew-surface); border: 1px solid var(--ew-border); border-radius: var(--ew-radius); padding: var(--ew-space-4); overflow: auto; }
+hr { border: 0; border-top: 1px solid var(--ew-border); margin: var(--ew-space-5) 0; }
+::selection { background: var(--ew-accent-soft); color: var(--ew-accent-light); }
+:focus-visible { outline: none; box-shadow: var(--ew-focus); border-radius: var(--ew-radius-sm); }
+
+/* Scrollbars (Chromium/WebKit) */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--ew-border-strong); border-radius: 8px; border: 2px solid var(--ew-bg); }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* --------------------------------------------------------------------------
+   4. Layout: Header · Main · Footer
+   -------------------------------------------------------------------------- */
+.ew-app { min-height: 100dvh; display: flex; flex-direction: column; }
+
+.ew-header {
+  position: sticky; top: 0; z-index: 50;
+  height: var(--ew-header-h);
+  display: flex; align-items: center; gap: var(--ew-space-4);
+  padding: 0 var(--ew-space-5);
+  background: color-mix(in srgb, var(--ew-surface) 88%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--ew-border);
+}
+.ew-header__brand {
+  display: flex; align-items: center; gap: var(--ew-space-3);
+  color: var(--ew-text); font-weight: 600; font-size: 1.05rem; text-decoration: none;
+}
+.ew-header__brand:hover { text-decoration: none; }
+.ew-header__brand .ew-logo { color: var(--ew-accent); }   /* Eule in Kategoriefarbe */
+.ew-header__nav { display: flex; gap: var(--ew-space-1); margin-left: var(--ew-space-4); }
+.ew-header__spacer { flex: 1; }
+
+.ew-nav-link {
+  display: inline-flex; align-items: center; gap: var(--ew-space-2);
+  padding: 6px 12px; border-radius: var(--ew-radius-sm);
+  color: var(--ew-text-muted); font-weight: 500; text-decoration: none;
+  transition: background var(--ew-transition), color var(--ew-transition);
+}
+.ew-nav-link:hover { color: var(--ew-text); background: var(--ew-surface-hover); text-decoration: none; }
+.ew-nav-link.is-active, .ew-nav-link[aria-current="page"] { color: var(--ew-accent-light); background: var(--ew-accent-soft); }
+
+.ew-main { flex: 1; width: 100%; max-width: var(--ew-content-max); margin: 0 auto; padding: var(--ew-space-6) var(--ew-space-5); }
+.ew-main--wide { max-width: none; }
+
+.ew-footer {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--ew-space-4); flex-wrap: wrap;
+  padding: var(--ew-space-4) var(--ew-space-5);
+  border-top: 1px solid var(--ew-border);
+  color: var(--ew-text-faint); font-size: .85rem;
+}
+/* "Ein Eulenwerk-Projekt" – steht in jedem Footer */
+.ew-brand {
+  display: inline-flex; align-items: center; gap: var(--ew-space-2);
+  color: var(--ew-text-muted); font-size: .85rem; text-decoration: none;
+}
+.ew-brand .ew-logo { color: var(--ew-text-muted); width: 18px; height: 18px; }
+.ew-brand:hover { color: var(--ew-text); text-decoration: none; }
+.ew-brand:hover .ew-logo { color: var(--ew-accent); }
+
+/* Logo-SVG (inline, stroke=currentColor) */
+.ew-logo { width: 28px; height: 28px; flex: none; display: block; }
+.ew-logo--lg { width: 48px; height: 48px; }
+
+/* --------------------------------------------------------------------------
+   5. Icons – Lucide/Tabler-Stil: 24er-Raster, Strich 1.5–2, currentColor
+   -------------------------------------------------------------------------- */
+.ew-icon { width: 20px; height: 20px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; vertical-align: -0.2em; }
+.ew-icon--sm { width: 16px; height: 16px; }
+.ew-icon--lg { width: 28px; height: 28px; }
+.ew-icon--accent { color: var(--ew-accent); }
+
+/* --------------------------------------------------------------------------
+   6. Buttons
+   -------------------------------------------------------------------------- */
+.ew-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--ew-space-2);
+  min-height: 38px; padding: 0 var(--ew-space-4);
+  border-radius: var(--ew-radius-sm); border: 1px solid var(--ew-border-strong);
+  background: var(--ew-surface-2); color: var(--ew-text);
+  font: inherit; font-weight: 500; line-height: 1; cursor: pointer; white-space: nowrap;
+  transition: background var(--ew-transition), border-color var(--ew-transition), color var(--ew-transition), transform 80ms ease;
+}
+.ew-btn:hover { background: var(--ew-surface-hover); border-color: var(--ew-text-faint); }
+.ew-btn:active { transform: translateY(1px); }
+.ew-btn:disabled, .ew-btn[aria-disabled="true"] { opacity: .45; cursor: not-allowed; transform: none; }
+
+.ew-btn--primary { background: var(--ew-accent); border-color: var(--ew-accent); color: var(--ew-text-on-accent); font-weight: 600; }
+.ew-btn--primary:hover { background: var(--ew-accent-hover); border-color: var(--ew-accent-hover); }
+.ew-btn--ghost { background: transparent; border-color: transparent; color: var(--ew-text-muted); }
+.ew-btn--ghost:hover { background: var(--ew-surface-hover); color: var(--ew-text); border-color: transparent; }
+.ew-btn--soft { background: var(--ew-accent-soft); border-color: transparent; color: var(--ew-accent-light); }
+.ew-btn--soft:hover { background: color-mix(in srgb, var(--ew-accent-soft) 80%, var(--ew-accent)); border-color: transparent; }
+.ew-btn--danger { background: transparent; border-color: var(--ew-danger); color: var(--ew-danger); }
+.ew-btn--danger:hover { background: color-mix(in srgb, var(--ew-danger) 15%, transparent); }
+.ew-btn--sm { min-height: 30px; padding: 0 var(--ew-space-3); font-size: .875rem; }
+.ew-btn--lg { min-height: 46px; padding: 0 var(--ew-space-5); font-size: 1.05rem; }
+.ew-btn--icon { padding: 0; width: 38px; }
+.ew-btn--icon.ew-btn--sm { width: 30px; }
+.ew-btn--block { width: 100%; }
+.ew-btn-group { display: inline-flex; gap: var(--ew-space-2); flex-wrap: wrap; }
+
+/* --------------------------------------------------------------------------
+   7. Formulare
+   -------------------------------------------------------------------------- */
+.ew-field { display: flex; flex-direction: column; gap: var(--ew-space-2); margin-bottom: var(--ew-space-4); }
+.ew-label { font-size: .875rem; font-weight: 500; color: var(--ew-text-muted); }
+.ew-hint { font-size: .8rem; color: var(--ew-text-faint); }
+.ew-input, .ew-select, .ew-textarea {
+  width: 100%; min-height: 38px; padding: 8px 12px;
+  background: var(--ew-bg); color: var(--ew-text);
+  border: 1px solid var(--ew-border-strong); border-radius: var(--ew-radius-sm);
+  font: inherit; line-height: 1.4;
+  transition: border-color var(--ew-transition), box-shadow var(--ew-transition);
+}
+.ew-input::placeholder, .ew-textarea::placeholder { color: var(--ew-text-faint); }
+.ew-input:hover, .ew-select:hover, .ew-textarea:hover { border-color: var(--ew-text-faint); }
+.ew-input:focus, .ew-select:focus, .ew-textarea:focus { outline: none; border-color: var(--ew-accent); box-shadow: 0 0 0 3px var(--ew-accent-soft); }
+.ew-input[aria-invalid="true"], .ew-input.is-invalid { border-color: var(--ew-danger); }
+.ew-textarea { min-height: 110px; resize: vertical; }
+.ew-select {
+  appearance: none; padding-right: 36px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239aa3ad' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>");
+  background-repeat: no-repeat; background-position: right 12px center;
+}
+.ew-input-group { display: flex; }
+.ew-input-group > .ew-input { border-radius: var(--ew-radius-sm) 0 0 var(--ew-radius-sm); }
+.ew-input-group > .ew-btn { border-radius: 0 var(--ew-radius-sm) var(--ew-radius-sm) 0; margin-left: -1px; }
+
+/* Checkbox / Radio / Switch */
+.ew-check { display: inline-flex; align-items: center; gap: var(--ew-space-2); cursor: pointer; user-select: none; }
+.ew-check input { appearance: none; width: 18px; height: 18px; margin: 0; border: 1px solid var(--ew-border-strong); border-radius: 5px; background: var(--ew-bg); display: grid; place-content: center; transition: background var(--ew-transition), border-color var(--ew-transition); }
+.ew-check input[type="radio"] { border-radius: 50%; }
+.ew-check input::before { content: ""; width: 10px; height: 10px; transform: scale(0); transition: transform 100ms ease; background: var(--ew-text-on-accent); clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%); }
+.ew-check input[type="radio"]::before { clip-path: none; border-radius: 50%; width: 8px; height: 8px; }
+.ew-check input:checked { background: var(--ew-accent); border-color: var(--ew-accent); }
+.ew-check input:checked::before { transform: scale(1); }
+
+.ew-switch { position: relative; display: inline-flex; align-items: center; gap: var(--ew-space-2); cursor: pointer; }
+.ew-switch input { appearance: none; width: 38px; height: 22px; margin: 0; border-radius: 11px; background: var(--ew-border-strong); position: relative; transition: background var(--ew-transition); }
+.ew-switch input::before { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--ew-text); transition: transform var(--ew-transition); }
+.ew-switch input:checked { background: var(--ew-accent); }
+.ew-switch input:checked::before { transform: translateX(16px); background: var(--ew-text-on-accent); }
+
+.ew-range { appearance: none; width: 100%; height: 4px; border-radius: 2px; background: var(--ew-border-strong); }
+.ew-range::-webkit-slider-thumb { appearance: none; width: 16px; height: 16px; border-radius: 50%; background: var(--ew-accent); border: 2px solid var(--ew-bg); }
+
+/* --------------------------------------------------------------------------
+   8. Karten, Listen, Tabellen
+   -------------------------------------------------------------------------- */
+.ew-card {
+  background: var(--ew-surface); border: 1px solid var(--ew-border); border-radius: var(--ew-radius-lg);
+  padding: var(--ew-space-5);
+}
+.ew-card--flat { padding: 0; overflow: hidden; }
+.ew-card__header { display: flex; align-items: center; justify-content: space-between; gap: var(--ew-space-3); margin-bottom: var(--ew-space-4); }
+.ew-card__title { margin: 0; font-size: 1.05rem; }
+.ew-card--accent { border-top: 3px solid var(--ew-accent); }
+.ew-card--clickable { cursor: pointer; transition: border-color var(--ew-transition), background var(--ew-transition); }
+.ew-card--clickable:hover { border-color: var(--ew-accent); background: var(--ew-surface-2); }
+
+.ew-grid { display: grid; gap: var(--ew-space-4); grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.ew-stack { display: flex; flex-direction: column; gap: var(--ew-space-3); }
+.ew-row { display: flex; align-items: center; gap: var(--ew-space-3); flex-wrap: wrap; }
+
+.ew-list { list-style: none; margin: 0; padding: 0; }
+.ew-list > li { display: flex; align-items: center; gap: var(--ew-space-3); padding: var(--ew-space-3) var(--ew-space-4); border-bottom: 1px solid var(--ew-border); }
+.ew-list > li:last-child { border-bottom: 0; }
+.ew-list > li:hover { background: var(--ew-surface-2); }
+
+.ew-table { width: 100%; border-collapse: collapse; font-size: .925rem; }
+.ew-table th, .ew-table td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--ew-border); vertical-align: middle; }
+.ew-table th { font-weight: 600; font-size: .8rem; letter-spacing: .04em; text-transform: uppercase; color: var(--ew-text-muted); background: var(--ew-surface-2); }
+.ew-table tbody tr:hover { background: var(--ew-surface-2); }
+.ew-table td.is-num, .ew-table th.is-num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Stat-Kachel (Dashboards) */
+.ew-stat { background: var(--ew-surface); border: 1px solid var(--ew-border); border-radius: var(--ew-radius); padding: var(--ew-space-4) var(--ew-space-5); }
+.ew-stat__label { font-size: .8rem; color: var(--ew-text-muted); margin-bottom: var(--ew-space-1); }
+.ew-stat__value { font-size: 1.7rem; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.ew-stat__value--accent { color: var(--ew-accent); }
+
+/* --------------------------------------------------------------------------
+   9. Tabs, Badges, Alerts, Toasts, Progress
+   -------------------------------------------------------------------------- */
+.ew-tabs { display: flex; gap: var(--ew-space-1); border-bottom: 1px solid var(--ew-border); margin-bottom: var(--ew-space-5); overflow-x: auto; }
+.ew-tab {
+  display: inline-flex; align-items: center; gap: var(--ew-space-2);
+  padding: 10px 14px; margin-bottom: -1px;
+  color: var(--ew-text-muted); font: inherit; font-weight: 500; background: none; border: 0; border-bottom: 2px solid transparent; cursor: pointer; white-space: nowrap;
+  transition: color var(--ew-transition), border-color var(--ew-transition);
+}
+.ew-tab:hover { color: var(--ew-text); }
+.ew-tab.is-active, .ew-tab[aria-selected="true"] { color: var(--ew-accent-light); border-bottom-color: var(--ew-accent); }
+
+.ew-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 999px; font-size: .75rem; font-weight: 600; letter-spacing: .02em; background: var(--ew-surface-2); color: var(--ew-text-muted); border: 1px solid var(--ew-border); }
+.ew-badge--accent { background: var(--ew-accent-soft); color: var(--ew-accent-light); border-color: transparent; }
+.ew-badge--ok     { background: color-mix(in srgb, var(--ew-ok) 18%, transparent);     color: var(--ew-ok);     border-color: transparent; }
+.ew-badge--warn   { background: color-mix(in srgb, var(--ew-warn) 18%, transparent);   color: var(--ew-warn);   border-color: transparent; }
+.ew-badge--danger { background: color-mix(in srgb, var(--ew-danger) 18%, transparent); color: var(--ew-danger); border-color: transparent; }
+
+.ew-alert { display: flex; gap: var(--ew-space-3); padding: var(--ew-space-3) var(--ew-space-4); border-radius: var(--ew-radius); border: 1px solid var(--ew-border); background: var(--ew-surface-2); border-left-width: 3px; }
+.ew-alert--info   { border-left-color: var(--ew-info); }
+.ew-alert--ok     { border-left-color: var(--ew-ok); }
+.ew-alert--warn   { border-left-color: var(--ew-warn); }
+.ew-alert--danger { border-left-color: var(--ew-danger); }
+.ew-alert--accent { border-left-color: var(--ew-accent); }
+
+.ew-toasts { position: fixed; right: var(--ew-space-4); bottom: var(--ew-space-4); display: flex; flex-direction: column; gap: var(--ew-space-2); z-index: 100; }
+.ew-toast { min-width: 260px; max-width: 380px; padding: var(--ew-space-3) var(--ew-space-4); background: var(--ew-surface-2); border: 1px solid var(--ew-border-strong); border-radius: var(--ew-radius); box-shadow: var(--ew-shadow); font-size: .925rem; }
+.ew-toast--ok { border-color: var(--ew-ok); }  .ew-toast--danger { border-color: var(--ew-danger); }
+
+.ew-progress { height: 6px; border-radius: 3px; background: var(--ew-border); overflow: hidden; }
+.ew-progress > span { display: block; height: 100%; background: var(--ew-accent); border-radius: 3px; transition: width 300ms ease; }
+
+.ew-spinner { width: 20px; height: 20px; border: 2px solid var(--ew-border-strong); border-top-color: var(--ew-accent); border-radius: 50%; animation: ew-spin .8s linear infinite; }
+@keyframes ew-spin { to { transform: rotate(360deg); } }
+
+/* --------------------------------------------------------------------------
+   10. Dialog / Modal
+   -------------------------------------------------------------------------- */
+.ew-dialog { margin: auto; border: 1px solid var(--ew-border-strong); border-radius: var(--ew-radius-lg); background: var(--ew-surface); color: var(--ew-text); padding: var(--ew-space-5); max-width: min(560px, 92vw); box-shadow: var(--ew-shadow); }
+.ew-dialog::backdrop { background: rgba(0,0,0,.6); backdrop-filter: blur(2px); }
+.ew-dialog__actions { display: flex; justify-content: flex-end; gap: var(--ew-space-2); margin-top: var(--ew-space-5); }
+
+/* --------------------------------------------------------------------------
+   11. Hilfsklassen
+   -------------------------------------------------------------------------- */
+.ew-accent { color: var(--ew-accent); }
+.ew-accent-light { color: var(--ew-accent-light); }
+.ew-mt-0 { margin-top: 0; } .ew-mb-0 { margin-bottom: 0; }
+.ew-mt-4 { margin-top: var(--ew-space-4); } .ew-mb-4 { margin-bottom: var(--ew-space-4); }
+.ew-mt-6 { margin-top: var(--ew-space-6); } .ew-mb-6 { margin-bottom: var(--ew-space-6); }
+.ew-text-sm { font-size: .875rem; } .ew-text-xs { font-size: .78rem; }
+.ew-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ew-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.ew-divider { border-top: 1px solid var(--ew-border); }
+
+@media (max-width: 640px) {
+  :root { --ew-text-size: 15px; }
+  .ew-header { padding: 0 var(--ew-space-4); }
+  .ew-header__nav { display: none; }       /* mobil: eigene Navigation einblenden */
+  .ew-main { padding: var(--ew-space-5) var(--ew-space-4); }
+  h1 { font-size: 1.55rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}
+
+/* --------------------------------------------------------------------------
+   12. Über-Dialog (eulenwerk-about.js / EulenwerkAbout.vue / EulenwerkAbout.tsx)
+   -------------------------------------------------------------------------- */
+.ew-about { width: min(520px, 92vw); padding: 0; overflow: hidden; }
+.ew-about__close { position: absolute; top: 10px; right: 10px; }
+.ew-about__head { display: flex; align-items: center; gap: var(--ew-space-4); padding: var(--ew-space-5) var(--ew-space-5) var(--ew-space-4); border-bottom: 1px solid var(--ew-border); background: linear-gradient(180deg, var(--ew-accent-soft) 0%, transparent 100%); }
+.ew-about__head .ew-logo { width: 56px; height: 56px; color: var(--ew-accent); }
+.ew-about__head h2 { margin: 0 0 2px; font-size: 1.35rem; }
+.ew-about__head p { margin: 0; font-size: .875rem; }
+.ew-about__body { padding: var(--ew-space-4) var(--ew-space-5); }
+.ew-about__body h4 { margin: var(--ew-space-4) 0 var(--ew-space-2); font-size: .78rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--ew-text-muted); font-family: var(--ew-font-sans); }
+.ew-about__body h4:first-child { margin-top: 0; }
+.ew-about__desc { margin: 0; color: var(--ew-text-muted); }
+.ew-about__people { display: grid; grid-template-columns: 1fr 1fr; gap: var(--ew-space-3); }
+.ew-about__person { display: flex; gap: var(--ew-space-3); padding: var(--ew-space-3); background: var(--ew-surface-2); border: 1px solid var(--ew-border); border-radius: var(--ew-radius); }
+.ew-about__person strong { display: block; }
+.ew-about__person .ew-muted { font-size: .8rem; margin-bottom: 4px; }
+.ew-about__links { display: flex; flex-direction: column; gap: 2px; font-size: .85rem; }
+.ew-about__links a { display: inline-flex; align-items: center; gap: 6px; }
+.ew-about__links .ew-icon { width: 14px; height: 14px; }
+.ew-avatar { width: 36px; height: 36px; flex: none; border-radius: 50%; display: grid; place-items: center; font-size: .8rem; font-weight: 700; background: var(--ew-accent); color: var(--ew-text-on-accent); }
+.ew-avatar--ai { background: var(--ew-surface-hover); color: var(--ew-accent-light); border: 1px solid var(--ew-border-strong); }
+.ew-about__stack { display: flex; flex-wrap: wrap; gap: var(--ew-space-2); }
+.ew-about__foot { display: flex; align-items: center; justify-content: space-between; gap: var(--ew-space-3); flex-wrap: wrap; padding: var(--ew-space-3) var(--ew-space-5); border-top: 1px solid var(--ew-border); font-size: .8rem; color: var(--ew-text-faint); }
+.ew-about__foot .ew-brand .ew-logo { color: var(--ew-accent); }
+@media (max-width: 480px) { .ew-about__people { grid-template-columns: 1fr; } }
+
+.ew-about__applogo { width: 56px; height: 56px; flex: none; border-radius: 12px; object-fit: contain; display: grid; place-items: center; font-size: 40px; line-height: 1; }
+
+/* --------------------------------------------------------------------------
+   13. Login-Seite – in allen Apps gleich, nur die Akzentfarbe wechselt
+   -------------------------------------------------------------------------- */
+.ew-login { min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--ew-space-5); padding: var(--ew-space-5) var(--ew-space-4); }
+.ew-login__card { width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: var(--ew-space-4); padding: var(--ew-space-6) var(--ew-space-6) var(--ew-space-5); background: var(--ew-surface); border: 1px solid var(--ew-border); border-radius: var(--ew-radius-lg); box-shadow: var(--ew-shadow); }
+.ew-login__brand { display: flex; flex-direction: column; align-items: center; gap: var(--ew-space-2); text-align: center; margin-bottom: var(--ew-space-2); }
+.ew-login__logo { width: 56px; height: 56px; border-radius: 14px; }
+.ew-login__brand h1 { margin: 0; font-size: 1.5rem; }
+.ew-login__brand p { margin: 0; color: var(--ew-text-muted); font-size: .925rem; }
+.ew-login__card .ew-field { margin-bottom: 0; }
+.ew-login__error { padding: var(--ew-space-2) var(--ew-space-3); border-radius: var(--ew-radius-sm); background: color-mix(in srgb, var(--ew-danger) 15%, transparent); color: var(--ew-danger); font-size: .9rem; }
+.ew-login__links { display: flex; justify-content: center; gap: var(--ew-space-4); font-size: .875rem; }
+.ew-login__foot { display: flex; align-items: center; justify-content: center; gap: var(--ew-space-4); font-size: .85rem; color: var(--ew-text-faint); }
